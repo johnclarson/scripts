@@ -1,0 +1,1739 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "SIGMA AWS CloudFormation Template IPA and Foreman/Puppet Server on CentOS 7",
+  "Parameters": {
+    "KeyName": {
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+      "Default": "jlarson-uc2s",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+    },
+    "ForemanHostName": {
+      "Description": "Name of Foreman host",
+      "Default": "c-prov-1",
+      "Type": "String"
+    },
+    "IPAMasterHostName": {
+      "Description": "Name of IPA master server",
+      "Default": "c-ipa-1",
+      "Type": "String"
+    },
+    "IPASlaveHostName": {
+      "Description": "Name of IPA slave server",
+      "Default": "c-ipa-2",
+      "Type": "String"
+    },
+    "IPAAdminPassword": {
+      "NoEcho": "true",
+      "Description": "IPA administrative user password",
+      "Default": "IpaAdmin2017",
+      "Type": "String"
+    },
+    "DomainName": {
+      "Description": "Domain name for IPA/Foreman stack",
+      "Default": "sigma.up",
+      "Type": "String"
+    },
+    "VPCPublicCIDR" : {
+      "Type" : "String",
+      "Description" : "IP Address range for the VPN connected VPC",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "10.70.13.0/24",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "VPCPrivateCIDR" : {
+      "Type" : "String",
+      "Description" : "IP Address range for the VPN connected VPC",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "172.24.0.0/16",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "PublicVPCSubnetACIDR" : {
+      "Type" : "String",
+      "Description" : "IP Address range for the Public VPN A Subnet",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "10.70.13.0/25",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "PublicVPCSubnetBCIDR" : {
+      "Type" : "String",
+      "Description" : "IP Address range for the Public VPN B Subnet",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "10.70.13.128/25",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "PrivateVPCSubnetACIDR" : {
+      "Type" : "String",
+      "Description" : "IP Address range for the Private VPN A Subnet",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "172.24.0.0/21",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "PrivateVPCSubnetBCIDR" : {
+      "Type" : "String",
+      "Description" : "IP Address range for the Private VPN B Subnet",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "172.24.8.0/21",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "PublicVPCid": {
+      "Description": "Public VPC where the IPA/Foreman stack should be built",
+      "Type": "AWS::EC2::VPC::Id",
+      "ConstraintDescription": "must be the name of a valid VPC"
+    },
+    "PrivateVPCid": {
+      "Description": "Private VPC to assign DHCP options set",
+      "Type": "AWS::EC2::VPC::Id",
+      "ConstraintDescription": "must be the name of a valid VPC"
+    },
+    "ForemanInstanceSubnet": {
+      "Description": "Subnet ID to build your Foreman instance in",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the name of a valid subnet"
+    },
+    "IPAMasterSubnet": {
+      "Description": "Subnet ID to build the IPA master instance in",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the name of a valid subnet"
+    },
+    "IPASlaveSubnet": {
+      "Description": "Subnet ID to build the IPA slave instance in",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the name of a valid subnet"
+    },
+    "DNSForwarder": {
+      "Description": "Forward DNS server",
+      "Default": "8.8.8.8",
+      "Type": "String"
+    },
+    "DBSubnetA": {
+      "Description": "First subnet for multi-az DB",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the name of a valid subnet"
+    },
+    "DBSubnetB": {
+      "Description": "Second subnet for multi-az DB",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the name of a valid subnet"
+    },
+    "CFNRpm": {
+      "Default": "aws-cfn-bootstrap.rpm",
+      "Description": "RPM name for AWS CFN bootstrap found in ContentS3Bucket",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z0-9\\-\\.]+",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters and hyphens."
+    },
+    "ContentS3Bucket": {
+      "Default": "sigma-build",
+      "Description": "S3 bucket for content retrieval",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z0-9\\-\\.]+",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters and hyphens."
+    },
+    "GitProjectsTarball": {
+      "Default": "projects.tar.gz",
+      "Description": "Name of Git Projects tarball found in ContentS3Bucket",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z0-9\\-\\.]+",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters and hyphens."
+    },
+    "SigmaYumHost": {
+      "Default": "sigma-yum.s3.amazonaws.com",
+      "Description": "Host where Sigma yum repos are served",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "CentOSBaseRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-centos-7",
+      "Description": "URL of base Centos yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "CentOSUpdatesRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-centos-7",
+      "Description": "URL of updates Centos yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "EPELRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-epel",
+      "Description": "URL of EPEL yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "ForemanRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-foreman-1.13",
+      "Description": "URL of Foreman yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "ForemanPluginsRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-foreman-plugins-1.13",
+      "Description": "URL of Foreman plugins yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "ScloScloRepoURL": {
+      "Default": "http://mirror.centos.org/centos/7/sclo/x86_64/sclo/",
+      "Description": "URL of Sclo SCLO yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "RHScloRepoURL": {
+      "Default": "http://mirror.centos.org/centos/7/sclo/x86_64/rh/",
+      "Description": "URL of RedHat SCLO yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "PuppetlabsRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-puppetlabs-el7",
+      "Description": "URL of Puppetlabs yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "AMI": {
+      "Default": "ami-6aa3097c",
+      "Description": "CentOS 7 AMI to use for IPA/Foreman servers",
+      "Type": "String",
+      "MinLength": "12",
+      "MaxLength": "12",
+      "AllowedPattern": "ami-[a-zA-Z0-9]*",
+      "ConstraintDescription": "must begin with ami- and contain only alphanumeric characters."
+    },
+    "DBName": {
+      "Default": "foreman",
+      "Description": "MySQL database name",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters."
+    },
+    "DBUser": {
+      "Default": "foreman",
+      "Description": "Username for Foreman MySQL database access",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "AllowedPattern": "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters."
+    },
+    "DBPassword": {
+      "NoEcho": "true",
+      "Default": "foreman2017",
+      "Description": "Password for Foreman MySQL database access",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "41",
+      "AllowedPattern": "[a-zA-Z0-9]*",
+      "ConstraintDescription": "must contain only alphanumeric characters."
+    },
+    "DBAllocatedStorage": {
+      "Default": "5",
+      "Description": "The size of the database (Gb)",
+      "Type": "Number",
+      "MinValue": "5",
+      "MaxValue": "1024",
+      "ConstraintDescription": "must be between 5 and 1024Gb."
+    },
+    "DBInstanceClass": {
+      "Description": "The database instance type",
+      "Type": "String",
+      "Default": "db.t2.small",
+      "AllowedValues": [
+        "db.t1.micro",
+        "db.m1.small",
+        "db.m1.medium",
+        "db.m1.large",
+        "db.m1.xlarge",
+        "db.m2.xlarge",
+        "db.m2.2xlarge",
+        "db.m2.4xlarge",
+        "db.m3.medium",
+        "db.m3.large",
+        "db.m3.xlarge",
+        "db.m3.2xlarge",
+        "db.m4.large",
+        "db.m4.xlarge",
+        "db.m4.2xlarge",
+        "db.m4.4xlarge",
+        "db.m4.10xlarge",
+        "db.r3.large",
+        "db.r3.xlarge",
+        "db.r3.2xlarge",
+        "db.r3.4xlarge",
+        "db.r3.8xlarge",
+        "db.m2.xlarge",
+        "db.m2.2xlarge",
+        "db.m2.4xlarge",
+        "db.cr1.8xlarge",
+        "db.t2.micro",
+        "db.t2.small",
+        "db.t2.medium",
+        "db.t2.large"
+      ],
+      "ConstraintDescription": "must select a valid database instance type."
+    },
+    "MultiAZDatabase": {
+      "Default": "true",
+      "Description": "Create a Multi-AZ MySQL Amazon RDS database instance",
+      "Type": "String",
+      "AllowedValues": [
+        "true",
+        "false"
+      ],
+      "ConstraintDescription": "must be either true or false."
+    },
+    "ForemanInstanceType": {
+      "Description": "Foreman Server EC2 instance type",
+      "Type": "String",
+      "Default": "t2.large",
+      "AllowedValues": [
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "IPAMasterInstanceType": {
+      "Description": "IPA master server EC2 instance type",
+      "Type": "String",
+      "Default": "t2.large",
+      "AllowedValues": [
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "IPASlaveInstanceType": {
+      "Description": "IPA master server EC2 instance type",
+      "Type": "String",
+      "Default": "t2.small",
+      "AllowedValues": [
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "ComputeResourceName": {
+      "Description": "Name for EC2 compute resource",
+      "Default": "UC2S",
+      "Type": "String"
+    },
+    "ComputeResourceRegion": {
+      "Description": "Name of EC2 compute resource region",
+      "Default": "us-east-1",
+      "Type": "String"
+    },
+    "SSHLocation": {
+      "Description": " The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "IPAInstanceIAMRole": {
+      "Description": "Name of IAM role for IPA servers",
+      "Default": "cfn-build",
+      "Type": "String"
+    },
+    "ForemanInstanceIAMRole": {
+      "Description": "Name of IAM role for Foreman server",
+      "Default": "ForemanEC2Create",
+      "Type": "String"
+    },
+  },
+  "Resources": {
+    "SigmaDHCPOptionsSet" : {
+      "Type" : "AWS::EC2::DHCPOptions",
+      "Properties" : {
+        "DomainName" : { "Ref" : "DomainName" },
+        "Tags" : [
+          { "Key" : "Name", "Value" : { "Fn::Join" : [ "", [ { "Ref" : "DomainName" }, " DHCP Options" ] ] } }
+        ],
+        "DomainNameServers" : [
+          "Fn::Join": [
+            "",
+            [ { "Fn::GetAtt": [
+                  "IPAMasterInstance",
+                     "PrivateIp"
+                 ]
+              }
+            ]
+          ]
+        ]
+      }
+    },
+    "SigmaPublicVPCDHCPOptionsAssn": {
+      "Type": "AWS::EC2::VPCDHCPOptionsAssociation",
+      "Properties": {
+        "DhcpOptionsId": {
+          "Ref": "SigmaDHCPOptionsSet"
+        },
+        "VpcId": {
+          "Ref":  "PublicVPCid"
+        }
+      }
+    },
+    "SigmaPrivateVPCDHCPOptionsAssn": {
+      "Type": "AWS::EC2::VPCDHCPOptionsAssociation",
+      "Properties": {
+        "DhcpOptionsId": {
+          "Ref": "SigmaDHCPOptionsSet"
+        },
+        "VpcId": {
+          "Ref":  "PrivateVPCid"
+        }
+      }
+    },
+    "IPAInstanceIAMProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "IPAInstanceIAMRole"
+          }
+        ]
+      }
+    },
+    "ForemanInstanceIAMProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "ForemanInstanceIAMRole"
+          }
+        ]
+      }
+    },
+    "IPAMasterInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "InstallAndRun": [
+              "Install",
+              "Configure",
+              "Run"
+            ]
+          },
+          "Install": {
+            "packages": {
+              "yum": {
+                "ipa-server": [],
+                "ipa-server-dns": []
+              }
+            },
+            "files": {
+              "/etc/cfn/cfn-hup.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[main]\n",
+                      "stack=",
+                      {
+                        "Ref": "AWS::StackId"
+                      },
+                      "\n",
+                      "region=",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n"
+                    ]
+                  ]
+                },
+                "mode": "000400",
+                "owner": "root",
+                "group": "root"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[cfn-auto-reloader-hook]\n",
+                      "triggers=post.update\n",
+                      "path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init\n",
+                      "action=/opt/aws/bin/cfn-init -v ",
+                      "         --stack ",
+                      {
+                        "Ref": "AWS::StackName"
+                      },
+                      "         --resource IPAMasterInstance ",
+                      "         --configsets InstallAndRun ",
+                      "         --region ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "runas=root\n"
+                    ]
+                  ]
+                }
+              }
+            },
+            "services": {
+              "cfn-hup": {
+                "enabled": "true",
+                "ensureRunning": "true",
+                "files": [
+                  "/etc/cfn/cfn-hup.conf",
+                  "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                ]
+              }
+            }
+          },
+          "Configure": {
+            "commands": {
+              "01_ipa_master_install": {
+                "command": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "/bin/aws s3 cp s3://",
+                      {
+                        "Ref": "ContentS3Bucket"
+                      },
+                      "/ipa_master_build.sh",
+                      " /tmp\n",
+                      "chmod +x /tmp/ipa_master_build.sh\n",
+                      "/tmp/ipa_master_build.sh --ipa_admin_password=",
+                      {
+                        "Ref": "IPAAdminPassword"
+                      },
+                      " --ipa_master_hostname=",  
+                      {
+                        "Ref": "IPAMasterHostName"
+                      },
+                      " --foreman_hostname=",  
+                      {
+                        "Ref": "ForemanHostName"
+                      },
+                      " --domain=",
+                      {
+                        "Ref": "DomainName"
+                      },
+                      " --dns_forwarder=",
+                      {
+                        "Ref": "DNSForwarder"
+                      },
+                      " --priv_vpc_cidr=",
+                      {
+                        "Ref": "VPCPrivateCIDR"
+                      }
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "Run": {
+            "services": {
+              "ipa": {
+                "enabled": "true",
+                "ensureRunning": "true"
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId": {
+          "Ref": "AMI"
+        },
+        "InstanceType": {
+          "Ref": "IPAMasterInstanceType"
+        },
+        "DisableApiTermination": "True",
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "Tags" : [
+          {
+            "Key" : "Name",
+            "Value" : {
+              "Fn::Join": [
+                ".",
+                [
+                  {
+                    "Ref": "IPAMasterHostName"
+                  },    
+                  {
+                    "Ref": "DomainName"
+                  }    
+                ]
+              ]
+            }
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "IPAInstanceIAMProfile"
+        },
+        "NetworkInterfaces": [
+          {
+            "AssociatePublicIpAddress": "True",
+            "DeleteOnTermination": "True",
+            "SubnetId": {
+              "Ref": "IPAMasterSubnet"
+            },
+            "DeviceIndex": "0",
+            "GroupSet": [
+              {
+                "Ref": "IPASecurityGroup"
+              }
+            ]
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "hostname ",
+                {
+                  "Ref": "IPAMasterHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\n",
+                "/bin/sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/sysconfig/selinux\n",
+                "echo \"",
+                {
+                  "Ref": "IPAMasterHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\" > /etc/hostname\n",
+                "echo \"HOSTNAME=",
+                {
+                  "Ref": "IPAMasterHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\" >> /etc/sysconfig/network\n",
+                "echo \"preserve_hostname: true\" >> /etc/cloud/cloud.cfg\n",
+                "# Set up yum repos\n",
+                "rm -rf /etc/yum.repos.d/*\n",
+                "cat << EOF > /etc/yum.repos.d/CentOS.repo\n",
+                "[CentOSBase]\n",
+                "name=CentOSBase\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSBaseRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "\n",
+                "[CentOSUpdates]\n",
+                "name=CentOSUpdates\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSUpdatesRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "\n",
+                "[CentOSUpdates]\n",
+                "name=CentOSUpdates\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSUpdatesRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/EPEL.repo\n",
+                "[EPEL]\n",
+                "name=EPEL\n",
+                "baseurl=",
+                {
+                  "Ref": "EPELRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "yum -y install pystache\n",
+                "yum -y install python-daemon\n",
+                "yum -y install awscli\n",
+                "yum -y update\n",
+                "/bin/aws s3 cp s3://",
+                {
+                  "Ref": "ContentS3Bucket"
+                },
+                "/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                " /tmp\n",
+                "rpm -i /tmp/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                "\n",
+                "/sbin/chkconfig --add cfn-hup\n",
+                "# Install the files and packages from the metadata\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource IPAMasterInstance ",
+                "         --configsets InstallAndRun ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "# Signal the status from cfn-init\n",
+                "/opt/aws/bin/cfn-signal -e $? ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource IPAMasterInstance ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Timeout": "PT30M"
+        }
+      }
+    },
+    "IPASlaveInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "InstallAndRun": [
+              "Install",
+              "Configure",
+              "Run"
+            ]
+          },
+          "Install": {
+            "packages": {
+              "yum": {
+                "ipa-server": [],
+                "ipa-server-dns": []
+              }
+            },
+            "files": {
+            "/etc/cfn/cfn-hup.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[main]\n",
+                      "stack=",
+                      {
+                        "Ref": "AWS::StackId"
+                      },
+                      "\n",
+                      "region=",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n"
+                    ]
+                  ]
+                },
+                "mode": "000400",
+                "owner": "root",
+                "group": "root"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[cfn-auto-reloader-hook]\n",
+                      "triggers=post.update\n",
+                      "path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init\n",
+                      "action=/opt/aws/bin/cfn-init -v ",
+                      "         --stack ",
+                      {
+                        "Ref": "AWS::StackName"
+                      },
+                      "         --resource IPASlaveInstance ",
+                      "         --configsets InstallAndRun ",
+                      "         --region ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "runas=root\n"
+                    ]
+                  ]
+                }
+              }
+            },
+            "services": {
+              "cfn-hup": {
+                "enabled": "true",
+                "ensureRunning": "true",
+                "files": [
+                  "/etc/cfn/cfn-hup.conf",
+                  "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                ]
+              }
+            }
+          },
+          "Configure": {
+            "commands": {
+              "01_install_IPA_slave": {
+                "command": {
+                  "Fn::Join": [
+                  "",
+                  [
+                    "",
+                    "/bin/aws s3 cp s3://",
+                    {
+                      "Ref": "ContentS3Bucket"
+                    },
+                    "/ipa_slave_build.sh",
+                    " /tmp\n",
+                    "chmod +x /tmp/ipa_slave_build.sh\n",
+                    "/tmp/ipa_slave_build.sh --ipa_admin_password=",
+                      {
+                        "Ref": "IPAAdminPassword"
+                      },
+                      " --ipa_master_hostname=",
+                      {
+                        "Ref": "IPAMasterHostName"
+                      },
+                      " --domain=",
+                      {
+                        "Ref": "DomainName"
+                      },
+                      " --ipa_master_ip=",
+                      {
+                        "Fn::GetAtt": [
+                          "IPAMasterInstance",
+                          "PrivateIp"
+                        ]
+                      },
+                      " --dns_forwarder=",
+                      {
+                        "Ref": "DNSForwarder"
+                      }
+                    ]
+                  ]
+                }
+              }   
+            } 
+          },
+          "Run": {
+            "services": {
+              "ipa": {
+                "enabled": "true",
+                "ensureRunning": "true"
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId": {
+          "Ref": "AMI"
+        },
+        "InstanceType": {
+          "Ref": "IPASlaveInstanceType"
+        },
+        "DisableApiTermination": "True",
+        "Tags" : [
+          {
+            "Key" : "Name",
+            "Value" : {
+              "Fn::Join": [
+                ".",
+                [
+                  {
+                    "Ref": "IPASlaveHostName"
+                  },    
+                  {
+                    "Ref": "DomainName"
+                  }    
+                ]
+              ]
+            }
+          }
+        ],
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "IamInstanceProfile": {
+          "Ref": "IPAInstanceIAMProfile"
+        },
+        "NetworkInterfaces": [
+          {
+            "AssociatePublicIpAddress": "True",
+            "DeleteOnTermination": "True",
+            "SubnetId": {
+              "Ref": "IPASlaveSubnet"
+            },
+            "DeviceIndex": "0",
+            "GroupSet": [
+              {
+                "Ref": "IPASecurityGroup"
+              }
+            ]
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "hostname ",
+                {
+                  "Ref": "IPASlaveHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\n",
+                "/bin/sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/sysconfig/selinux\n",
+                "echo \"",
+                {
+                  "Ref": "IPASlaveHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\" > /etc/hostname\n",
+                "echo \"HOSTNAME=",
+                {
+                  "Ref": "IPASlaveHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\" >> /etc/sysconfig/network\n",
+                "echo \"preserve_hostname: true\" >> /etc/cloud/cloud.cfg\n",
+                "# Set up yum repos\n",
+                "rm -rf /etc/yum.repos.d/*\n",
+                "cat << EOF > /etc/yum.repos.d/CentOS.repo\n",
+                "[CentOSBase]\n",
+                "name=CentOSBase\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSBaseRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "\n",
+                "[CentOSUpdates]\n",
+                "name=CentOSUpdates\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSUpdatesRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/EPEL.repo\n",
+                "[EPEL]\n",
+                "name=EPEL\n",
+                "baseurl=",
+                {
+                  "Ref": "EPELRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "yum -y install pystache\n",
+                "yum -y install python-daemon\n",
+                "yum -y install awscli\n",
+                "/bin/aws s3 cp s3://",
+                {
+                  "Ref": "ContentS3Bucket"
+                },
+                "/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                " /tmp\n",
+                "rpm -i /tmp/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                "\n",
+                "/sbin/chkconfig --add cfn-hup\n",
+                "# Install the files and packages from the metadata\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource IPASlaveInstance ",
+                "         --configsets InstallAndRun ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "# Signal the status from cfn-init\n",
+                "/opt/aws/bin/cfn-signal -e $? ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource IPASlaveInstance ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Timeout": "PT30M"
+        }
+      }
+    }, 
+    "ForemanInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "InstallAndRun": [
+              "Install",
+              "Configure",
+              "Run"
+            ]
+          },
+          "Install": {
+            "packages": {
+              "yum": {
+                "foreman-installer": [],
+                "foreman-ec2": [],
+                "tfm-rubygem-mysql2": [],
+                "tfm-rubygem-foreman_templates-doc": [],
+                "tfm-rubygem-foreman_templates": [],
+                "foreman-mysql2": [],
+                "mariadb": [],
+                "ipa-admintools": [],
+                "ipa-client": [],
+                "foreman-compute": []
+              }
+            },
+            "files": {
+              "/etc/cfn/cfn-hup.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[main]\n",
+                      "stack=",
+                      {
+                        "Ref": "AWS::StackId"
+                      },
+                      "\n",
+                      "region=",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n"
+                    ]
+                  ]
+                },
+                "mode": "000400",
+                "owner": "root",
+                "group": "root"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[cfn-auto-reloader-hook]\n",
+                      "triggers=post.update\n",
+                      "path=Resources.ForemanInstance.Metadata.AWS::CloudFormation::Init\n",
+                      "action=/opt/aws/bin/cfn-init -v ",
+                      "         --stack ",
+                      {
+                        "Ref": "AWS::StackName"
+                      },
+                      "         --resource ForemanInstance ",
+                      "         --configsets InstallAndRun ",
+                      "         --region ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "runas=root\n"
+                    ]
+                  ]
+                }
+              }
+            },
+            "services": {
+              "cfn-hup": {
+                "enabled": "true",
+                "ensureRunning": "true",
+                "files": [
+                  "/etc/cfn/cfn-hup.conf",
+                  "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                ]
+              }
+            }
+          },
+          "Configure": {
+            "commands": {
+              "01_install_foreman": {
+                "command": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "/bin/aws s3 cp s3://",
+                      {
+                        "Ref": "ContentS3Bucket"
+                      },
+                      "/foreman_build.sh",
+                      " /tmp\n",
+                      "chmod +x /tmp/foreman_build.sh\n",
+                      "/tmp/foreman_build.sh --dbpassword=",
+                      {
+                        "Ref": "DBPassword"
+                      },
+                      " --ipa_admin_password=",
+                      {
+                        "Ref": "IPAAdminPassword"
+                      },
+                      " --aws_resource_name=",
+                      {
+                        "Ref": "ComputeResourceName"
+                      },
+                      " --aws_region=",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      " --mysqlurl=",
+                      {
+                        "Fn::GetAtt": [
+                          "MySQLDatabase",
+                          "Endpoint.Address"
+                        ]
+                      },
+                      " --pub_subnet_a_cidr=",
+                      {
+                        "Ref": "PublicVPCSubnetACIDR"
+                      },
+                      " --pub_subnet_b_cidr=",
+                      {
+                        "Ref": "PublicVPCSubnetBCIDR"
+                      },
+                      " --priv_subnet_a_cidr=",
+                      {
+                        "Ref": "PrivateVPCSubnetACIDR"
+                      },
+                      " --priv_subnet_b_cidr=",
+                      {
+                        "Ref": "PrivateVPCSubnetBCIDR"
+                      },
+                      " --foreman_hostname=",
+                      {
+                        "Ref": "ForemanHostName"
+                      },
+                      " --ipa_master_hostname=",
+                      {
+                        "Ref": "IPAMasterHostName"
+                      },
+                      " --build_bucket=",
+                      {
+                        "Ref": "ContentS3Bucket"
+                      },
+                      " --project_code=",
+                      {
+                        "Ref": "GitProjectsTarball"
+                      },
+                      " --yum_host=",
+                      {
+                        "Ref": "SigmaYumHost"
+                      },
+                      " --domain=",
+                      {
+                        "Ref": "DomainName"
+                      },
+                      " --ipa_slave_ip=",
+                      {
+                        "Fn::GetAtt": [
+                          "IPASlaveInstance",
+                          "PrivateIp"
+                        ]
+                      },
+                      " --ipa_master_ip=",
+                      {
+                        "Fn::GetAtt": [
+                          "IPAMasterInstance",
+                          "PrivateIp"
+                        ]
+                      },
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "Run": {
+            "services": {
+              "httpd": {
+                "enabled": "true",
+                "ensureRunning": "true"
+              },
+              "foreman-proxy": {
+                "enabled": "true",
+                "ensureRunning": "true"
+              },
+              "puppetserver": {
+                "enabled": "true",
+                "ensureRunning": "true"
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId": {
+          "Ref": "AMI"
+        },
+        "InstanceType": {
+          "Ref": "ForemanInstanceType"
+        },
+        "DisableApiTermination": "True",
+        "Tags" : [
+          {
+            "Key" : "Name",
+            "Value" : {
+              "Fn::Join": [
+                ".",
+                [
+                  {
+                    "Ref": "ForemanHostName"
+                  },    
+                  {
+                    "Ref": "DomainName"
+                  }    
+                ]
+              ]
+            }
+          }
+        ],
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "IamInstanceProfile": {
+          "Ref": "ForemanInstanceIAMProfile"
+        },
+        "NetworkInterfaces": [
+          {
+            "AssociatePublicIpAddress": "True",
+            "DeleteOnTermination": "True",
+            "SubnetId": {
+              "Ref": "ForemanInstanceSubnet"
+            },
+            "DeviceIndex": "0",
+            "GroupSet": [
+              {
+                "Ref": "ForemanSecurityGroup"
+              }
+            ]
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "hostname ",
+                {
+                  "Ref": "ForemanHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\n",
+                "/bin/sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/sysconfig/selinux\n",
+                "IPADDR=`/usr/bin/curl -s http://169.254.169.254/2016-06-30/meta-data/local-ipv4`\n",
+                "echo \"$IPADDR     ",
+                {
+                  "Ref": "ForemanHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "  ",
+                {
+                  "Ref": "ForemanHostName"
+                },
+                "  puppet\" >> /etc/hosts\n",
+                "echo \"",
+                {
+                  "Ref": "ForemanHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\" > /etc/hostname\n",
+                "echo \"HOSTNAME=",
+                {
+                  "Ref": "ForemanHostName"
+                },
+                ".",
+                {
+                  "Ref": "DomainName"
+                },
+                "\" >> /etc/sysconfig/network\n",
+                "echo \"preserve_hostname: true\" >> /etc/cloud/cloud.cfg\n",
+                "# Set up yum repos\n",
+                "rm -rf /etc/yum.repos.d/*\n",
+                "cat << EOF > /etc/yum.repos.d/CentOS.repo\n",
+                "[CentOSBase]\n",
+                "name=CentOSBase\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSBaseRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "\n",
+                "[CentOSUpdates]\n",
+                "name=CentOSUpdates\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSUpdatesRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/EPEL.repo\n",
+                "[EPEL]\n",
+                "name=EPEL\n",
+                "baseurl=",
+                {
+                  "Ref": "EPELRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/Foreman.repo\n",
+                "[Foreman]\n",
+                "name=Foreman\n",
+                "baseurl=",
+                {
+                  "Ref": "ForemanRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "\n",
+                "[Foreman-plugins]\n",
+                "name=Foreman-plugins\n",
+                "baseurl=",
+                {
+                  "Ref": "ForemanPluginsRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/SCLO-SCLO.repo\n",
+                "[SCLO-SCLO]\n",
+                "name=SCLO-SCLO\n",
+                "baseurl=",
+                {
+                  "Ref": "ScloScloRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/RH-SCLO.repo\n",
+                "[RH-SCLO]\n",
+                "name=RH-SCLO\n",
+                "baseurl=",
+                {
+                  "Ref": "RHScloRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/Puppetlabs.repo\n",
+                "[Puppetlabs]\n",
+                "name=Puppetlabs\n",
+                "baseurl=",
+                {
+                  "Ref": "PuppetlabsRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "yum -y install pystache\n",
+                "yum -y install python-daemon\n",
+                "yum -y install awscli\n",
+                "yum -y remove puppet\n",
+                "yum -y update\n",
+                "/bin/aws s3 cp s3://",
+                {
+                  "Ref": "ContentS3Bucket"
+                },
+                "/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                " /tmp\n",
+                "rpm -i /tmp/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                "\n",
+                "/sbin/chkconfig --add cfn-hup\n",
+                "# Install the files and packages from the metadata\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource ForemanInstance ",
+                "         --configsets InstallAndRun ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "# Signal the status from cfn-init\n",
+                "/opt/aws/bin/cfn-signal -e $? ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource ForemanInstance ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Timeout": "PT30M"
+        }
+      }
+    },
+    "ForemanSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Enable Foreman ports",
+        "VpcId": {
+          "Ref": "PublicVPCid"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "53",
+            "ToPort": "53",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "69",
+            "ToPort": "69",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "8443",
+            "ToPort": "8443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "8140",
+            "ToPort": "8140",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": {
+              "Ref": "SSHLocation"
+            }
+          }
+        ]
+      }
+    },
+    "DBSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Open database for access",
+        "VpcId": {
+          "Ref": "PublicVPCid"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3306",
+            "ToPort": "3306",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "DBSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Availability Zones for Foreman RDS DB",
+        "SubnetIds": [
+          {
+            "Ref": "DBSubnetA"
+          },
+          {
+            "Ref": "DBSubnetB"
+          }
+        ]
+      }
+    },
+    "MySQLDatabase": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "Engine": "MySQL",
+        "DBInstanceIdentifier": "foremandb",
+        "DBName": {
+          "Ref": "DBName"
+        },
+        "MultiAZ": {
+          "Ref": "MultiAZDatabase"
+        },
+        "MasterUsername": {
+          "Ref": "DBUser"
+        },
+        "MasterUserPassword": {
+          "Ref": "DBPassword"
+        },
+        "DBInstanceClass": {
+          "Ref": "DBInstanceClass"
+        },
+        "AllocatedStorage": {
+          "Ref": "DBAllocatedStorage"
+        },
+        "DBSubnetGroupName": {
+          "Ref": "DBSubnetGroup"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Fn::GetAtt": [
+              "DBSecurityGroup",
+              "GroupId"
+            ]
+          }
+        ]
+      }
+    },
+    "IPASecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Enable IPA ports",
+        "VpcId": {
+          "Ref": "PublicVPCid"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "53",
+            "ToPort": "53",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "53",
+            "ToPort": "53",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "636",
+            "ToPort": "636",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "389",
+            "ToPort": "389",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "88",
+            "ToPort": "88",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "464",
+            "ToPort": "464",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "88",
+            "ToPort": "88",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "464",
+            "ToPort": "464",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "7389",
+            "ToPort": "7389",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "123",
+            "ToPort": "123",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": {
+              "Ref": "SSHLocation"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

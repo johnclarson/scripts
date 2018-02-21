@@ -1,0 +1,289 @@
+#!/usr/bin/python2
+
+import argparse
+import collections
+import boto
+from boto.ec2.blockdevicemapping import BlockDeviceType, BlockDeviceMapping
+from fabric.api import *
+from fabric.tasks import *
+import re
+import time
+import yaml
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--region", help="AWS region to build your AMI")
+parser.add_argument("--aws_access_key", help="AWS Access Key")
+parser.add_argument("--aws_secret_key", help="AWS Secret Key")
+parser.add_argument("--config", help="Full path to config file")
+parser.add_argument("--key", help="The SSH private key (must be in ./keys folder and don't include suffix")
+parser.add_argument("--update-only", help="Just run a yum update", action='store_true')
+parser.add_argument("--skip-disks", help="Skip disk creation", action='store_true')
+parser.add_argument("--skip-scripts", help="Skip running scripts", action='store_true')
+parser.add_argument("--deregister", help="De-register source AMI", action='store_true')
+args = parser.parse_args()
+
+timestr = time.strftime("%Y%m%d-%H%M%S")
+config_dir = "/etc/ami-builder/configs/"
+cmd_file_dir = "/etc/ami-builder/commands/"
+key_file_dir = "/etc/ami-builder/keys/"
+yum_opts = "--setopt minrate=100 --setopt timeout=300"
+sshkey = key_file_dir + args.key + ".pem"
+region = args.region
+
+configfile = config_dir + args.config + ".yaml"
+
+
+with open(configfile, 'r') as c:
+    try:
+        config = yaml.load(c) 
+    except yaml.YAMLError as exc:
+        print(exc)
+
+source_ami = config['source_ami'] 
+instance_type = config['instance_type']
+security_group = config['security_group']
+subnet = config['subnet']
+name = config['name']
+rootuser = config['rootuser']
+ami_name = config['ami_name'] + "-" + timestr
+ami_description = config['ami_description']
+config_name = config['config_name']
+ami_nametag = config_name + " by ami-builder on " + timestr
+if not region:
+    region = config['region']
+
+
+if args.aws_access_key and args.aws_secret_key:
+    conn = boto.ec2.connect_to_region(region, aws_access_key_id=args.aws_access_key, aws_secret_access_key=args.aws_secret_key)
+else:
+    conn = boto.ec2.connect_to_region(region)
+
+
+# build device map (Extend root drive and add another EBS drive)
+# Need to use variables for loop here. "BlockDeviceType" is tricky.
+# Will return and try and fix this
+# Currently supports up to eight drives
+if args.skip_disks != True:
+
+    bdm = BlockDeviceMapping()
+    for disk in config["Disks"]:
+        if disk == "sda1":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sda1 = BlockDeviceType(delete_on_termination=True)
+                dev_sda1.size = size
+            else:
+                dev_sda1 = BlockDeviceType()
+                dev_sda1.ephemeral_name = size
+            bdm['/dev/sda1'] = dev_sda1
+        if disk == "sdb":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sdb = BlockDeviceType(delete_on_termination=True)
+                dev_sdb.size = size
+            else:
+                dev_sdb = BlockDeviceType()
+                dev_sdb.ephemeral_name = size
+            bdm['/dev/sdb'] = dev_sdb
+        if disk == "sdc":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sdc = BlockDeviceType(delete_on_termination=True)
+                dev_sdc.size = size
+            else:
+                dev_sdc = BlockDeviceType()
+                dev_sdc.ephemeral_name = size
+            bdm['/dev/sdc'] = dev_sdc
+        if disk == "sdd":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sdd = BlockDeviceType(delete_on_termination=True)
+                dev_sdd.size = size
+            else:
+                dev_sdd = BlockDeviceType()
+                dev_sdd.ephemeral_name = size
+            bdm['/dev/sdd'] = dev_sdd
+        if disk == "sde":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sde = BlockDeviceType(delete_on_termination=True)
+                dev_sde.size = size
+            else:
+                dev_sde = BlockDeviceType()
+                dev_sde.ephemeral_name = size
+            bdm['/dev/sde'] = dev_sde
+        if disk == "sdf":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sdf = BlockDeviceType(delete_on_termination=True)
+                dev_sdf.size = size
+            else:
+                dev_sdf = BlockDeviceType()
+                dev_sdf.ephemeral_name = size
+            bdm['/dev/sdf'] = dev_sdf
+        if disk == "sdg":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sdg = BlockDeviceType(delete_on_termination=True)
+                dev_sdg.size = size
+            else:
+                dev_sdg = BlockDeviceType()
+                dev_sdg.ephemeral_name = size
+            bdm['/dev/sdg'] = dev_sdg
+        if disk == "sdh":
+            size = config["Disks"][disk]
+            check = isinstance(size,int)
+            if check is True:
+                dev_sdh = BlockDeviceType(delete_on_termination=True)
+                dev_sdh.size = size
+            else:
+                dev_sdh = BlockDeviceType()
+                dev_sdh.ephemeral_name = size
+            bdm['/dev/sdh'] = dev_sdh
+
+    # build instance using device map
+    reservation = conn.run_instances(source_ami, key_name=args.key, subnet_id=subnet, instance_type=instance_type, security_group_ids=[security_group], block_device_map=bdm)
+else:
+    reservation = conn.run_instances(source_ami, key_name=args.key, subnet_id=subnet, instance_type=instance_type, security_group_ids=[security_group])
+
+instance = reservation.instances[0]
+print('Waiting for instance to start...')
+
+time.sleep(15)
+
+status = instance.update()
+
+while instance.update() != "running":
+    time.sleep(5)  # Run this in a green thread, ideally
+
+print('New instance "' + instance.id + '" accessible at ' + instance.private_ip_address)
+
+instance.add_tag('Name', name)
+fabhost = instance.private_ip_address
+
+# Fab is no good at detrmining if you are using an SSH key or logging in so force a wait here
+time.sleep(120)
+
+def deploy(hosts, command):
+    execute(execute_deploy, command=command, hosts=hosts)
+
+def yum_install(hosts, package):
+        execute(execute_yum_install, package=package, hosts=hosts)
+
+def repo_install(hosts, repo, baseurl):
+    execute(execute_repo_install, repo=repo, baseurl=baseurl, hosts=hosts)
+
+def yum_group_install(hosts, pgroup):
+        execute(execute_yum_group_install, pgroup=pgroup, hosts=hosts)
+
+def execute_deploy(command):
+    with settings(warn_only=True):
+        sudo(command)
+
+def execute_yum_install(package):
+    sudo("yum --setopt minrate=100 --setopt timeout=300 -y install " + package)
+
+def execute_yum_group_install(pgroup):
+    sudo("yum --setopt minrate=100 --setopt timeout=300 -y groupinstall \"" + pgroup + "\"")
+
+def execute_repo_install(repo, baseurl):
+    sudo("echo \"[" + repo + "]\" >> /etc/yum.repos.d/" + repo + ".repo")
+    sudo("echo \"name=" + repo + "\" >> /etc/yum.repos.d/" + repo + ".repo")
+    sudo("echo \"baseurl=" + baseurl + "\" >> /etc/yum.repos.d/" + repo + ".repo")
+    sudo("echo \"enabled=1\" >> /etc/yum.repos.d/" + repo + ".repo")
+    sudo("echo \"gpgcheck=0\" >> /etc/yum.repos.d/" + repo + ".repo")
+
+def update():
+    print "Performing update ...."
+    deploy(host, "yum --setopt minrate=100 --setopt timeout=300 -y update")
+
+        
+
+host = [fabhost]
+env.user=rootuser
+env.key_filename=[sshkey]
+env.connection_attempts=6
+env.timeout=30
+
+
+# Go out and clean up yum repos so we can start fresh
+deploy(host, "yum clean all")    
+deploy(host, "rm -rf /etc/yum.repos.d/*")    
+
+# Process yum repos from config
+repos = config['Repos']
+if repos:
+    for repo in config['Repos']:
+        for k, v in config["Repos"].items():
+            baseurl = config["Repos"][repo]["baseurl"]
+        repo_install(host, repo, baseurl)
+else:
+    print "No repos to process."
+
+if args.update_only == True:
+
+    update()
+
+else:
+    update()
+
+    # Install packages
+    packages = config['Packages']
+    if packages:
+        for package in packages:
+            yum_install(host, package)
+    else:
+        print "No packages to process."
+
+    # Install package groups
+    pgroups =  config['PackageGroups']
+    if pgroups:
+        for pgroup in pgroups:
+            yum_group_install(host, pgroup)
+    else:
+        print "No package groups to process."
+
+    if args.skip_scripts != True:
+        # Iterate through and execute command files
+        cmd_files = config['CommandFiles']
+        if cmd_files:
+            for cmd_file in cmd_files:
+                cmd_file = cmd_file_dir + cmd_file
+        
+                with open(cmd_file) as f:
+                    commands = f.readlines()
+                for command in commands:
+                    deploy(host, command)
+        else:
+            print "No command files to process."
+
+# Create AMI now
+image_id = conn.create_image(instance.id, ami_name, description=ami_description)
+image = conn.get_all_images(image_ids=[image_id])[0]
+while image.state == 'pending':
+    time.sleep(5)
+    image.update()
+if image.state == 'available':
+    print "Image creation complete!"
+    print "The ID of the new AMI is " + image.id
+    print("Applying default tags to image.")
+    img = conn.get_image(image_id)
+    img.add_tag("Name", ami_nametag) 
+    img.add_tag("Config", config_name) 
+    img.add_tag("CreateDate", timestr)
+
+
+
+# Terminate instance
+conn.terminate_instances(instance_ids=[instance.id])
+
+# De-register source AMI if desired
+if args.deregister == True:
+    conn.deregister_image(source_ami, delete_snapshot=True) 

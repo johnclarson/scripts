@@ -1,0 +1,589 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "SIGMA AWS CloudFormation Template for Yum Bucket and Sync Server on CentOS 7",
+  "Parameters": {
+    "KeyName": {
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+      "Default": "jlarson-uc2s",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+    },
+    "VPCid": {
+      "Description": "VPC where the Sync server should be built",
+      "Type": "AWS::EC2::VPC::Id",
+      "ConstraintDescription": "must be the name of a valid VPC"
+    },
+    "CentOSBaseRepoURL": {
+      "Default": "http://mirror.centos.org/centos/7/os/x86_64/",
+      "Description": "URL of base Centos yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "CentOSUpdatesRepoURL": {
+      "Default": "http://mirror.centos.org/centos/7/updates/x86_64/",
+      "Description": "URL of updates Centos yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "EPELRepoURL": {
+      "Default": "https://dl.fedoraproject.org/pub/epel/7/x86_64/",
+      "Description": "URL of EPEL yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "InstanceSubnet": {
+      "Description": "Public subnet ID to build your Sync instance in",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the name of a valid subnet with an IGW"
+    },
+    "CFNRpm": {
+      "Default": "aws-cfn-bootstrap.rpm",
+      "Description": "RPM name for AWS CFN bootstrap found in ContentS3Bucket",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z0-9\\-\\.]+",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters and hyphens."
+    },
+    "RepoSyncScript": {
+      "Default": "sync_repos.sh",
+      "Description": "Name of repo sync script found in ContentS3Bucket",
+      "Type": "String"
+    },
+    "RepoSyncConfig": {
+      "Default": "reposync.external.repo",
+      "Description": "Name of repo sync script found in ContentS3Bucket",
+      "Type": "String"
+    },
+      "ContentS3Bucket": {
+      "Default": "sigma-build",
+      "Description": "S3 bucket for content retrieval",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z0-9\\-\\.]+",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters and hyphens."
+    },
+    "NeedS3Bucket" : {
+      "Default": "no",
+      "Description" : "Whether we should create an S3 bucket for syncing.",
+      "Type" : "String",
+      "AllowedValues" : [ "no", "yes" ],
+      "ConstraintDescription" : "Must be either \"yes\" or \"no\"."
+    },
+    "AMI": {
+      "Default": "ami-4ac0e52f",
+      "Description": "CentOS 7 AMI to use for Sync server",
+      "Type": "String",
+      "MinLength": "12",
+      "MaxLength": "12",
+      "AllowedPattern": "ami-[a-zA-Z0-9]*",
+      "ConstraintDescription": "must begin with ami- and contain only alphanumeric characters."
+    },
+    "InstanceType": {
+      "Description": "Sync Server EC2 instance type",
+      "Type": "String",
+      "Default": "t2.small",
+      "AllowedValues": [
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "SSHLocation": {
+      "Description": " The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    }
+  },
+  "Conditions" : {
+    "CreateS3Bucket" : { "Fn::Equals" : [{"Ref" : "NeedS3Bucket"}, "yes"]}
+  },
+  "Resources": {
+    "SyncInstanceIAMRole": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [
+                "ec2.amazonaws.com"
+              ]
+            },
+            "Action": [
+              "sts:AssumeRole"
+            ]
+          }
+        ]
+      },
+      "Path": "/",
+      "Policies": [
+        {
+          "PolicyName": "syncS3access",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "s3:ListAllMyBuckets",
+                "Resource": "arn:aws:s3:::*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:ListBucket",
+                  "s3:GetBucketLocation"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::", { "Ref": "ContentS3Bucket" } ]
+                   ] 
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::", { "Ref": "ContentS3Bucket" }, "/*" ]
+                   ] 
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:ListBucket",
+                  "s3:CreateBucket",
+                  "s3:GetBucketLocation"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::sigma-yum" ]
+                   ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::sigma-yum/*" ]
+                   ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:ListBucket",
+                  "s3:CreateBucket",
+                  "s3:GetBucketLocation"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::sigma-dto" ]
+                   ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::sigma-dto/*" ]
+                   ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+    },
+    "SyncInstanceIAMProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "SyncInstanceIAMRole"
+          }
+        ]
+      }
+    },
+    "YumSigmaS3BucketPolicy" : {
+      "Condition" : "CreateS3Bucket",
+      "Type" : "AWS::S3::BucketPolicy",
+      "Properties" : { 
+        "Bucket" : {"Ref" : "YumSigmaS3Bucket"},
+        "PolicyDocument": {
+          "Statement":[{
+            "Sid": "PublicReadForGetBucketObjects",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": ["s3:GetObject"],
+            "Resource": "arn:aws:s3:::sigma-yum/*"
+          }]
+        }
+      },
+      "DeletionPolicy" : "Retain"
+    },
+    "YumSigmaS3Bucket" : {
+      "Condition" : "CreateS3Bucket",
+      "Type" : "AWS::S3::Bucket",
+      "Properties" : {
+        "BucketName" : "sigma-yum",
+        "AccessControl" : "PublicRead",
+        "WebsiteConfiguration" : {
+          "IndexDocument" : "index.html",
+          "ErrorDocument" : "error.html"
+        }
+      },
+      "DeletionPolicy" : "Retain"
+    },
+    "SyncInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "InstallAndConfigure": [
+              "Install",
+              "Configure"
+            ]
+          },
+          "Install": {
+            "packages": {
+              "yum": {
+                "createrepo": []
+              }
+            },
+            "files": {
+              "/etc/cfn/cfn-hup.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[main]\n",
+                      "stack=",
+                      {
+                        "Ref": "AWS::StackId"
+                      },
+                      "\n",
+                      "region=",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n"
+                    ]
+                  ]
+                },
+                "mode": "000400",
+                "owner": "root",
+                "group": "root"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[cfn-auto-reloader-hook]\n",
+                      "triggers=post.update\n",
+                      "path=Resources.SyncInstance.Metadata.AWS::CloudFormation::Init\n",
+                      "action=/opt/aws/bin/cfn-init -v ",
+                      "         --stack ",
+                      {
+                        "Ref": "AWS::StackName"
+                      },
+                      "         --resource SyncInstance ",
+                      "         --configsets InstallAndConfigure ",
+                      "         --region ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "runas=root\n"
+                    ]
+                  ]
+                }
+              }
+            },
+            "services": {
+              "cfn-hup": {
+                "enabled": "true",
+                "ensureRunning": "true",
+                "files": [
+                  "/etc/cfn/cfn-hup.conf",
+                  "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                ]
+              }
+            }
+          },
+          "Configure": {
+            "commands": {
+              "01_setup_repo_dirs": {
+                "command": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "mkdir -p /repos/sync\n"
+                    ]
+                  ]
+                }
+              },
+              "02_download_sync_files": {
+                "command": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "aws s3 cp s3://", 
+                      {
+                         "Ref": "ContentS3Bucket"
+                      },
+                      "/reposync/update.sh",
+                      " /repos\n",
+                      "aws s3 cp s3://", 
+                      {
+                         "Ref": "ContentS3Bucket"
+                      },
+                      "/reposync/",
+                      {
+                         "Ref": "RepoSyncScript"
+                      },
+                      " /repos\n",
+                      "aws s3 cp s3://", 
+                      {
+                         "Ref": "ContentS3Bucket"
+                      },
+                      "/reposync/",
+                      {
+                         "Ref": "RepoSyncConfig"
+                      },
+                      " /repos\n",
+                      "chmod +x /repos/",
+                      {
+                         "Ref": "RepoSyncScript"
+                      },
+                      "\n",
+                      "chmod +x /repos/update.sh\n"
+                     ]
+                  ]
+                }
+              },
+              "03_setup_systemd": {
+                "command": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "cat << EOF > /etc/systemd/system/reposync.service\n",
+                      "[Unit]\n",
+                      "Description=reposync Service\n",
+                      "After=network.target\n",
+                      "\n",
+                      "[Service]\n",
+                      "Type=simple\n",
+                      "User=root\n",
+                      "ExecStartPre=/repos/update.sh",
+                      "ExecStart=/repos/",
+                      {
+                         "Ref": "RepoSyncScript"
+                      },
+                      " --sync2s3 --sync_custom_repos\n",
+                      "Restart=on-abort\n",
+                      "\n",
+                      "[Install]\n",
+                      "WantedBy=multi-user.target\n",
+                      "EOF\n",
+                      "systemctl daemon-reload\n",
+                      "systemctl enable reposync\n",
+                      "systemctl start reposync\n"
+                    ]
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId": {
+          "Ref": "AMI"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "Tags" : [
+          {
+            "Key" : "Name",
+            "Value" : "Yum Sync Server"
+          },
+          {
+            "Key" : "schedule",
+            "Value" : "{\"sat\":{\"start\":12,\"stop\"16}}"
+          }
+        ],
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "IamInstanceProfile": {
+          "Ref": "SyncInstanceIAMProfile"
+        },
+        "BlockDeviceMappings" : [
+          {
+            "DeviceName" : "/dev/sda1",
+            "Ebs" : { "VolumeSize" : "200" }
+          }
+        ],
+        "NetworkInterfaces": [
+          {
+            "AssociatePublicIpAddress": "True",
+            "DeleteOnTermination": "True",
+            "SubnetId": {
+              "Ref": "InstanceSubnet"
+            },
+            "DeviceIndex": "0",
+            "GroupSet": [
+              {
+                "Ref": "SyncSecurityGroup"
+              }
+            ]
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "/bin/sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/sysconfig/selinux\n",
+                "# Set up yum repos\n",
+                "rm -rf /etc/yum.repos.d/*\n",
+                "cat << EOF > /etc/yum.repos.d/CentOS.repo\n",
+                "[CentOSBase]\n",
+                "name=CentOSBase\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSBaseRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "\n",
+                "[CentOSUpdates]\n",
+                "name=CentOSUpdates\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSUpdatesRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/EPEL.repo\n",
+                "[EPEL]\n",
+                "name=EPEL\n",
+                "baseurl=",
+                {
+                  "Ref": "EPELRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "yum -y install pystache\n",
+                "yum -y install python-daemon\n",
+                "yum -y install awscli\n",
+                "/bin/aws s3 cp s3://",
+                {
+                  "Ref": "ContentS3Bucket"
+                },
+                "/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                " /tmp\n",
+                "rpm -i /tmp/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                "\n",
+                "/sbin/chkconfig --add cfn-hup\n",
+                "# Install the files and packages from the metadata\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource SyncInstance ",
+                "         --configsets InstallAndConfigure ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "# Signal the status from cfn-init\n",
+                "/opt/aws/bin/cfn-signal -e $? ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource SyncInstance ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Timeout": "PT240M"
+        }
+      }
+    },
+    "SyncSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Enable Sync server ports",
+        "VpcId": {
+          "Ref": "VPCid"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": {
+              "Ref": "SSHLocation"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

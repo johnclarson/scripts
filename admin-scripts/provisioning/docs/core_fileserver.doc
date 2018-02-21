@@ -1,0 +1,385 @@
+1) Build two /production/core_fileserver machines. Should use m4.xl
+
+2) Attach a 100GB EBS volume GP2 as /dev/sdf. Make sure you create them in same AZ as hosts.
+
+3)Attach the following role to hosts (for IP swapping)
+
+
+-
+    wVersion": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "ec2:AssignPrivateIpAddresses",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DescribeInstances"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+        }
+    ]
+}
+
+IMPORTANT: Both machines will need access to AWS EC2 API via NAT or IGW
+
+For Nat security group:
+
+# aws ec2 authorize-security-group-ingress --group-id <nat security group ID>  --protocol tcp --port 80 --cidr <node 1 IP address>/32
+
+# aws ec2 authorize-security-group-ingress --group-id <nat security group ID> --protocol tcp --port 443 --cidr <node 1 IP address>/32
+
+# aws ec2 authorize-security-group-ingress --group-id <nat security group ID> --protocol tcp --port 80 --cidr <node 2 IP address>/32
+
+# aws ec2 authorize-security-group-ingress --group-id <nat security group ID> --protocol tcp --port 443 --cidr <node 2 IP address>/32
+
+4) Install cluster software:
+
+# yum install -y pacemaker pcs fence-agents-all psmisc policycoreutils-python
+
+5) Configure cluster (both nodes)
+
+# echo "sigmaha" | passwd --stdin hacluster
+# systemctl start pcsd
+# systemctl enable pcsd
+
+-> Add both nodes FQDN and hostname to /etc/hosts
+# echo "<NODE 1 IP address>   <NODE 1 FQDN> <NODE 1 hostname>" >> /etc/hosts
+# echo "<NODE 2 IP address>   <NODE 2 FQDN> <NODE 2 hostname>" >> /etc/hosts
+
+On node 1:
+
+# pcs cluster auth <node1> <node2> -u hacluster
+<Enter password>
+
+# pcs cluster setup --name corefs <node1> <node2>
+
+# pcs cluster start --all
+# pcs cluster enable --all
+
+Check status:
+
+# pcs status
+
+Set properties:
+
+# pcs property set stonith-enabled=false
+# pcs property set no-quorum-policy=ignore
+# pcs property set default-resource-stickiness="INFINITY"
+
+
+6) Install DRBD, You will need the sigma-elrepo yum repo configured
+
+(both nodes)
+
+# yum -y install drbd*-utils kmod-drbd*
+# modprobe drbd
+
+Check it:
+
+# lsmod | grep drbd
+drbd                  405376  0 
+libcrc32c              12644  2 xfs,drbd
+
+7) Configure DRBD
+
+Edit /etc/drbd.d/global_common.conf
+
+Add to global:
+
+minor-count 32;
+
+Create /etc/drbd.d/corefsdata.res with the following:
+
+resource corefsdata {
+protocol C;         
+on <node 1 FQDN> {
+                device /dev/drbd0;
+                disk /dev/vgdrbd/vol1;
+                address <node 1 IP address>:7788;
+                meta-disk internal;
+        }
+on <node 2 FQDN>  {
+                device /dev/drbd0;
+                disk /dev/vgdrbd/vol1;
+                address <node 2 IP address>:7788;
+                meta-disk internal;
+        }
+}
+
+8) Configure DRBD storage. Both nodes
+
+# pvcreate /dev/xvdf
+# vgcreate vgdrbd /dev/xvdf
+# lvcreate -n vol1 -l100%FREE vgdrbd
+
+9) Initialize DRBD. Both nodes.
+
+# drbdadm create-md corefsdata
+
+10) Start and enable DRBD. Both nodes.
+
+# systemctl start drbd
+# systemctl enable drbd
+
+11) Define primary node for DRBD. One node.
+
+# drbdadm primary corefsdata --force
+
+12) Check your work
+
+# cat /proc/drbd
+GIT-hash: 9976da086367a2476503ef7f6b13d4567327a280 build by akemi@Build64R7, 2016-12-04 01:08:48
+ 0: cs:SyncSource ro:Primary/Secondary ds:UpToDate/Inconsistent C r-----
+    ns:313624 nr:0 dw:0 dr:314536 al:8 bm:0 lo:0 pe:0 ua:0 ap:0 ep:1 wo:f oos:104536644
+	[>....................] sync'ed:  0.4% (102084/102392)M
+	finish: 1:58:23 speed: 14,712 (11,200) K/sec
+
+13) Make xfs filesystem and test mount on primary node.
+
+# mkfs.xfs /dev/drbd0
+# mount /dev/drbd0 /mnt
+# umount /dev/drbd0 /mnt
+
+14) Configure EC2 floating IP resource for pacemaker.
+
+Copy AWSFIP from admin-scripts/pacemaker/resources to /usr/lib/ocf/resource.d/heartbeat on both hosts and chmod +x
+
+# chmod +x /usr/lib/ocf/resource.d/heartbeat/AWSFIP
+
+In EC2 GUI/API, associate a secondary IP to primary node:
+
+# aws ec2 assign-private-ip-addresses --allow-reassignment --network-interface-id <primary node ENI ID> --secondary-private-ip-address-count 1
+
+Get that IP address to use for next things:
+
+On both nodes, create the following file at /etc/sysconfig/network-scripts/ifcfg-eth0:0
+
+DEVICE="eth0:0"
+BOOTPROTO="static"
+ONBOOT="yes"
+IPADDR="<Secondary IP address we created>"
+NETMASK="255.255.255.0"
+
+
+# pcs resource create VirtIP ocf:heartbeat:AWSFIP ip=<IP address from above> region=<AWS region>
+
+Now test the results:
+
+# pcs status resources
+ VirtIP	(ocf::heartbeat:AWSFIP):	Started <node that is live>
+
+
+Try and ping and then log in from a different machine:
+
+# ping <secondary IP>
+64 bytes from 172.24.0.115: icmp_seq=5 ttl=64 time=0.028 ms
+64 bytes from 172.24.0.115: icmp_seq=6 ttl=64 time=0.023 ms
+64 bytes from 172.24.0.115: icmp_seq=7 ttl=64 time=0.019 ms
+
+# ssh <secondary ip>
+# hostname
+<node that is live>
+
+
+Now transfer IP by stopping cluster on live node:
+
+# pcs cluster stop <node that is live>
+c-corefs-2: Stopping Cluster (pacemaker)...
+c-corefs-2: Stopping Cluster (corosync)...
+
+Now go to other machine and check resource status:
+
+# pcs status resources
+ VirtIP	(ocf::heartbeat:AWSFIP):	Started <other node>
+
+Run same ping and ssh test as above. Notice that you are now on the other machine after sshing.
+
+Restart cluster on node where you stopped it
+
+# pcs cluster start c-corefs-2
+c-corefs-2: Starting Cluster...
+
+
+15) Set up DRBD resource in pacemaker. Run this on node that is running in the cluster.
+
+# pcs cluster cib drbd_cfg
+# pcs -f drbd_cfg resource create DrbdData ocf:linbit:drbd drbd_resource=corefsdata op monitor interval=60s
+
+This command will allow DRBD to run on both nodes
+
+# pcs -f drbd_cfg resource master DrbdDataClone DrbdData master-max=1 master-node-max=1 clone-max=2 clone-node-max=1 notify=true
+
+Push the config:
+
+# pcs cluster cib-push drbd_cfg
+
+Check status: (should see VirtIP and Master DRBD on the same node)
+
+# pcs status resources
+VirtIP	(ocf::heartbeat:AWSFIP):	Started c-corefs-1
+ Master/Slave Set: DrbdDataClone [DrbdData]
+     Masters: [ c-corefs-1 ]
+     Slaves: [ c-corefs-2 ]
+
+16) Set up DRBD filesystem resource.
+
+Create a mount point for the DRBD volume on both nodes.
+
+# mkdir /export
+
+One one node, set up filesystem resource:
+
+# pcs cluster cib fs_cfg
+# pcs  -f fs_cfg resource create DrbdFS Filesystem device="/dev/drbd0" directory="/export" fstype="xfs"
+
+Set up constraint priority and resource ordering
+
+# pcs  -f fs_cfg constraint colocation add DrbdFS with DrbdDataClone INFINITY with-rsc-role=Master
+# pcs  -f fs_cfg constraint order promote DrbdDataClone then start DrbdFS
+Adding DrbdDataClone DrbdFS (kind: Mandatory) (Options: first-action=promote then-action=start)
+
+Push the config.
+
+# pcs cluster cib-push fs_cfg
+
+Check your work:
+
+# pcs status resources
+ VirtIP	(ocf::heartbeat:AWSFIP):	Started c-corefs-1
+ Master/Slave Set: DrbdDataClone [DrbdData]
+     Masters: [ c-corefs-1 ]
+     Slaves: [ c-corefs-2 ]
+ DrbdFS	(ocf::heartbeat:Filesystem):	Started c-corefs-1
+
+# df -kh /export
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/drbd0      100G   33M  100G   1% /export
+
+Write a file on the mount and we can see if it's there when we transfer the live node. 
+We can watch the DRBD data transfer before we do that
+
+On node 2:
+
+# watch cat /proc/drbd
+Every 2.0s: cat /proc/drbd                                                                                           Thu Jun 29 13:36:26 2017
+
+version: 8.4.9-1 (api:1/proto:86-101)
+GIT-hash: 9976da086367a2476503ef7f6b13d4567327a280 build by akemi@Build64R7, 2016-12-04 01:08:48
+ 0: cs:Connected ro:Secondary/Primary ds:UpToDate/UpToDate C r-----
+    ns:0 nr:106856087 dw:106856087 dr:0 al:8 bm:0 lo:0 pe:0 ua:0 ap:0 ep:1 wo:f oos:0
+
+On node 1:
+
+# dd if=/dev/zero of=/export/test_from_node1 bs=2048 count=3000000
+
+You should see the dw: number increasing on the node 2 command 
+
+After the file is written, we will stop the cluster on node 1 and check status:
+
+On node 1, stop the cluster:
+
+# pcs cluster stop <node 1>
+c-corefs-1: Stopping Cluster (pacemaker)...
+c-corefs-1: Stopping Cluster (corosync)...
+
+On node 2, check cluster status and check for file on export mount:
+
+# pcs status resources
+ VirtIP	(ocf::heartbeat:AWSFIP):	Started c-corefs-2
+ Master/Slave Set: DrbdDataClone [DrbdData]
+     Masters: [ c-corefs-2 ]
+     Stopped: [ c-corefs-1 ]
+ DrbdFS	(ocf::heartbeat:Filesystem):	Started c-corefs-2
+
+# df -kh /export
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/drbd0      100G  5.8G   95G   6% /export
+
+# ls -lh /export
+total 5.8G
+-rw-r--r-- 1 root root 5.8G Jun 29 13:40 test_from_node1
+
+Restart cluster on node 1
+
+# pcs cluster start <node 1>
+c-corefs-1: Starting Cluster...
+
+
+17) Set up NFS Pacemaker resource.
+
+Create export directory on node with filesystem
+
+# mkdir /export/cloudera-manager
+# chmod 1777 /export/cloudera-manager
+
+Create exports file on both nodes. 
+
+# cat /etc/exports
+
+/export *(rw,fsid=0,sync)
+/export/cloudera-manager *(rw,fsid=1,sync)
+
+On node wih filesystem, mv /var/lib/nfs to DRBD filesystem and link it
+
+# mv /var/lib/nfs/ /export/
+# ln -s /export/nfs/ /var/lib/nfs
+
+On other node, remove and link same directory
+
+# rm -fr /var/lib/nfs/
+# ln -s /export/nfs/ /var/lib/nfs
+
+Edit /etc/idmapd.conf on both nodes.
+
+# sed -i 's/#Domain = local.domain.edu/Domain = <IPA domain>/' /etc/idmapd.conf
+
+On active node:
+
+# pcs resource create nfs-server systemd:nfs-server
+
+Constrain nfs-server to start after DBRD filesystem and VirtIP comes on line
+
+# pcs cluster cib fs_cfg
+# pcs -f fs_cfg constraint colocation add nfs-server with DrbdFS INFINITY
+# pcs -f fs_cfg constraint order VirtIP then nfs-server
+# pcs -f fs_cfg constraint order DrbdFS then nfs-server
+Adding DrbdFS nfs-server (kind: Mandatory) (Options: first-action=start then-action=start)
+# pcs cluster cib-push fs_cfg
+
+You should add a A record for the VirtIP in DNS for easier access for clients.
+
+DONE!
+
+Now test some failure scenarios:
+
+Mount the share on a client and cd into the mount.
+
+client # mount -t nfs4 corefs.sigma.dsci:/cloudera-manager /mnt
+
+client # cd /mnt
+
+Now stop the cluster on the active node:
+
+active node # pcs cluster stop c-corefs-2
+c-corefs-2: Stopping Cluster (pacemaker)...
+c-corefs-2: Stopping Cluster (corosync)...
+
+On other node, make sure the services transfer. Should take a minute or so:
+
+other node # pcs status resources
+ VirtIP	(ocf::heartbeat:AWSFIP):	Started c-corefs-1
+ Master/Slave Set: DrbdDataClone [DrbdData]
+     Masters: [ c-corefs-1 ]
+     Stopped: [ c-corefs-2 ]
+ DrbdFS	(ocf::heartbeat:Filesystem):	Started c-corefs-1
+ nfs-server	(systemd:nfs-server):	Started c-corefs-1
+
+Client should still be happy
+
+Make sure to restart cluster on previously active node. 
+
+You can also test by going into AWS console and stopping a node.
+
+
+
+

@@ -1,0 +1,263 @@
+AWS
+  * create sandbox desktop AMI with 30GB / and 15GB /home/
+  * create public VPC (/24) with two subnets (/25)
+  * create private VPC (/16) with multiple subnets (/21)
+  * create VPC peering agreement
+  * add private VPC to public routing table
+  * add public VPC to private routing table
+  * create DHCP option sets for DNS and sigma tld search domain
+
+c-ipa-1.sigma.up (Public)
+  * create a foo user
+  * create foo_admins group
+  * create foo_sudoers rule allowing foo_admins full sudo
+
+  * issue service certificates
+    - foreman.sigma.up
+    - gitlab.sigma.up
+    - rundeck.sigma.up
+    - software.sigma.up
+    - tftp.sigma.up
+    - yum.sigma.up
+  * add service dns entries
+    - demo -> guacamole
+    - gitlab -> c-repo-1
+    - puppet -> c-prov-1
+    - puppet-ca -> c-prov-1
+    - rundeck -> c-orch-1
+    - software = c-repo-1 Secondary IP
+    - tftp = c-repo-1 Secondary IP
+    - yum = c-repo-1 Secondary IP
+
+
+c-prov-1.$domain (Public) Automated build steps (assumes external MySQL DB)
+install repos
+  * CentOS Base
+  * CentOS Updates
+  * EPEL
+  * Foreman
+  * Foreman Plugins
+  * SCLO-SCLO
+  * RH-SCLO
+  * Puppetlabs
+  * Puppetlabs Deps
+
+install packages
+  * foreman-installer
+  * foreman-ec2
+  * tfm-rubygem-mysql2
+  * foreman-mysql2
+  * mariadb
+  * ipa-admintools
+  * foreman-compute
+
+Commands:
+
+  - Perform database config (assumes external MySQL database)
+    * foreman-installer --foreman-configure-epel-repo=false --foreman-configure-scl-repo=false
+    * sed -i 's/postgresql/mysql2/' /etc/foreman/database.yml
+    * sed -i "s|password.*|password: $mysql_d_bpassword|" /etc/foreman/database.yml
+    * echo "  host: $mysqldb_endpoint" >> /etc/foreman/database.yml
+    * echo "  port: 3306" >> /etc/foreman/database.yml
+
+  - Migrate database
+    * su -s /bin/bash -c 'cd /usr/share/foreman && tfm-rake db:migrate RAILS_ENV=production' foreman
+
+  - Seed database
+    * su -s /bin/bash -c 'cd /usr/share/foreman && tfm-rake db:seed RAILS_ENV=production' foreman
+
+  - Restart httpd
+    * service httpd restart
+ 
+  - Reset admin password
+    * su -s /bin/bash -c "cd /usr/share/foreman && tfm-rake permissions:reset password=$dbpassword \
+      RAILS_ENV=production" foreman
+
+  - Add proxy to mysql 
+    * mysql -u foreman --password=$dbpassword -h $mysqlurl foreman -e "insert into smart_proxies \
+      (id,name,url) values ('1','local','https://$foreman_hostname.$domain:8443')
+ 
+  - Fix DNS in prep for IPA client install
+    * rm /etc/resolv.conf
+    * echo "domain $domain" >> /etc/resolv.conf
+    * echo "nameserver $ipa_master_ip" >> /etc/resolv.conf
+ 
+  - Install IPA Client
+    * ipa-client-install -p admin -w $ipa_admin_password --enable-dns-updates \
+      --server=$ipa_master_hostname.$domain --domain $domain --no-dns-sshfp -U --force
+
+  - Configure IPA Realm
+    * rm /etc/foreman-proxy/settings.d/realm.yml
+    * cat << EOF > /etc/foreman-proxy/settings.d/realm.yml
+      ---
+      :enabled: true
+      :realm_provider: freeipa
+      :realm_keytab: /etc/foreman-proxy/freeipa.keytab
+      :realm_principal: realm-proxy@${realm}
+      :freeipa_remove_dns: true
+      EOF
+
+  - Configure realm Proxy
+    * cd /etc/foreman-proxy && echo $ipa_admin_password | foreman-prepare-realm admin realm-proxy
+    * chown foreman-proxy /etc/foreman-proxy/freeipa.keytab
+    * chmod 600 /etc/foreman-proxy/freeipa.keytab
+    * cp /etc/ipa/ca.crt /etc/pki/ca-trust/source/anchors/ipa.crt  
+    * update-ca-trust enable
+    * update-ca-trust
+
+  - Fix EC2 plugin to use instance role (if using AWS as a compute resource)
+    * sed -i 's/:aws_access_key_id => user, :aws_secret_access_key => password/:use_iam_profile \
+      => true/g' /usr/share/foreman/app/models/compute_resources/foreman/model/ec2.rb
+    * service httpd restart
+
+  - Add AWS Compute Resource (if using AWS as a compute resource)
+    * HOME=/root /bin/hammer -u admin -p $dbpassword  compute-resource create \
+      --name $aws_resource_name --url $aws_region --provider EC2 --user null --password null
+    * service httpd restart
+
+  - Update and refresh proxy
+    * HOME=/root /bin/hammer -u admin -p $dbpassword proxy update --id=1
+    * HOME=/root /bin/hammer -u admin -p $dbpassword proxy refresh-features --id 1
+
+  - Download and install puppet code/binaries (assumes using S3)
+    * rm -rf /etc/puppetlabs/code/*
+    * /bin/aws s3 cp s3://$build_bucket/$puppet_code /etc/puppetlabs
+    * mkdir -p /data/puppetlabs
+    * /bin/aws s3 cp s3://$build_bucket/$puppet_binaries /data/puppetlabs
+    * tar zxf /etc/puppetlabs/$puppet_code -C /etc/puppetlabs
+    * tar zxf /data/puppetlabs/$puppet_binaries -C /data/puppetlabs 
+
+  - Fix Fileserver configuration for binaries
+    * cat << EOF >> /etc/puppetlabs/puppet/fileserver.conf
+      [binaries]
+        path /data/puppetlabs/binaries
+        allow *
+      EOF
+
+  - Download generic hiera.yaml file from S3
+    * /bin/aws s3 cp s3://$build_bucket/hiera.yaml /etc/puppetlabs/puppet/hiera.yaml
+    
+  - Set up domain specific enviroment
+    * newenv=production_${domain_prefix}_${domain_suffix}
+    * mv /etc/puppetlabs/code/environments/production /etc/puppetlabs/code/environments/$newenv
+    * mv /etc/puppetlabs/code/environments/${newenv}/hieradata/environments/production.yaml \
+      /etc/puppetlabs/code/environments/${newenv}/hieradata/environments/${newenv}.yaml
+    * sed -i "s|IPAMASTER|$ipa_master_ip|g" /etc/puppetlabs/code/environments/${newenv}/\
+      hieradata/environments/${newenv}.yaml
+    * sed -i "s|IPASLAVE|$ipa_slave_ip|g" /etc/puppetlabs/code/environments/${newenv}/\
+      hieradata/environments/${newenv}.yaml
+ 
+  - Run puppet agent
+    * /opt/puppetlabs/bin/puppet agent -t
+
+  - Create new environment in Foreman and update host
+    * HOME=/root /bin/hammer -u admin -p $dbpassword environment create --name $newenv
+    * HOME=/root /bin/hammer -u admin -p $dbpassword host update --environment $newenv --id 1
+
+  - Rsync yaml stuff and restart server and client
+    * rsync -av /opt/puppetlabs/server/data/puppetserver/yaml/ /opt/puppetlabs/puppet/cache/yaml/
+    * service puppetserver restart
+    * /opt/puppetlabs/bin/puppet agent -t
+
+  - Add subnets
+    * pubanm=$(ipcalc -m $pub_subnet_a_cidr | cut -f2 -d=)
+      pubbnm=$(ipcalc -m $pub_subnet_b_cidr | cut -f2 -d=)
+      prvanm=$(ipcalc -m $priv_subnet_a_cidr | cut -f2 -d=)
+      prvbnm=$(ipcalc -m $priv_subnet_b_cidr | cut -f2 -d=)
+    * HOME=/root /bin/hammer -u admin -p $dbpassword subnet create --name public-a \
+      --network $pub_subnet_a_cidr --domains $domain --mask $pubanm
+    * HOME=/root /bin/hammer -u admin -p $dbpassword subnet create --name public-b \
+      --network $pub_subnet_b_cidr --domains $domain --mask $pubbnm
+    * HOME=/root /bin/hammer -u admin -p $dbpassword subnet create --name private-a \
+      --network $priv_subnet_a_cidr --domains $domain --mask $prvanm
+    * HOME=/root /bin/hammer -u admin -p $dbpassword subnet create --name private-b \
+      --network $priv_subnet_b_cidr --domains $domain --mask $prvbnm
+
+  - Add globals
+    * /bin/aws s3 cp s3://$build_bucket/foreman_global_variables /tmp  
+    * lines=$(cat /tmp/foreman_global_variables)
+      for line in $lines; do 
+        KEY=$(echo $line | cut -f1 -d:);
+        VALUE=$(echo $line | cut -f2 -d:);
+        HOME=/root /bin/hammer -u admin -p $dbpassword global-parameter set --name $KEY --value $VALUE
+      done
+    * HOME=/root /bin/hammer -u admin -p $dbpassword global-parameter set --name sigma_tld --value $domain
+    * HOME=/root /bin/hammer -u admin -p $dbpassword global-parameter set --name sigma_base_dn \
+      --value dc=$domain_prefix,dc=$domain_suffix
+
+
+c-prov-1.sigma.up (Public)
+  * login to Foreman as admin
+  * configure LDAP
+  * login to Foreman as foo and register email address foo@sigma.up
+  * login to Foreman as admin and configure foo user as adminstrator
+  * create host fact files
+    - /facts/puppet_environment.fact
+    - /facts/puppet_role.fact
+    - /facts/sigma_tld.fact
+  * create /data/puppetlabs/binaries/
+  * configure /etc/puppetlabs/puppet/fileserver.yaml:
+        [binaries]
+          path /data/puppetlabs/binaries
+          allow *
+  * chown puppet: /etc/puppetlabs/code/environments
+  * mv /etc/puppetlabs/code/environments/production -> production_sigma_up
+  * modify /etc/puppetlabs/puppet/hiera.yaml
+        :backends:
+          - yaml
+        :hierarchy:
+          - "nodes/%{::trusted.certname}"
+          - "roles/%{::puppet_role}"
+          - "environments/%{::puppet_environment}"
+          - common
+        :yaml:
+          :datadir:  /etc/puppetlabs/code/environments/%{::environment}/hieradata
+          :merge_behavior:  deeper
+  * add entry in /etc/puppetlabs/puppet/autosign.conf -> *.sigma.up
+  * restart puppetserver daemon and run puppet agent manually to confirm empty catalog processes successfully using empty production environment
+  * copy /etc/puppetlabs/code/environments/production_sigma_up/hieradata/environments/production.yaml -> production_sigma_up.yaml
+  * configure production_sigma_up.yaml for environment settings
+  * add production_sigma_up to Foreman Puppet Environments
+  * edit Foreman host entry for c-prov-1 and change the environment to production_sigma_up
+  * run puppet agent against new environment
+  * copy the default puppet vardir yaml to the new puppet vardir yaml if it changed in puppet.conf
+    - rsync -av /opt/puppetlabs/server/data/puppetserver/yaml/ /opt/puppetlabs/puppet/cache/yaml/
+  * restart puppetserver daemon to load new Puppet-built configuration
+  * re-run puppet agent against new environment
+
+c-repo-1.sigma.up (Public)
+  * create fqdn node file in hiera for base::repos, apache::ip, and web_server::vhosts
+  * provision new host
+  * assign a second IP address and add /etc/sysconfig/network-scripts/ifcfg-eth0:0 alias file for secondary IP
+  * ipa-client-install
+  * attach and format vg_data-lv_data as 300GB /data mount point
+  * transfer in /data/yum
+  * transfer gitlab.sigma.up host certs from c-ipa-1
+  * configure yum repos
+  * yum install puppet
+  * conifgure puppet facts
+  * configure 'environment = production_sigma_up' in /etc/puppetlabs/puppet/puppet.conf
+  * run puppet agent
+  * connect to https://gitlab.sigma.up
+    - reset default admin password (automatically prompted by system)
+
+c-ipa-1.sigma.up (Public)
+  yum repo
+  install facts
+  * yum install -y puppet
+  * puppet agent -tv
+  * yum install foreman-proxy
+
+foreman (c-prov-1.sigma.up)
+  * Global Parameters
+  * Hosts -> Installation Media
+    - 
+
+build c-rdp-1.sigma.up (Public)
+  * yum install cairo libogg libvorbis 
+
+build c-orch-1.sigma.up (Private)
+
+
+
+

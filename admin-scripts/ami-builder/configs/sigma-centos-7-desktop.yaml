@@ -1,0 +1,52 @@
+---
+
+config_name:                        sigma-centos-7-desktop
+source_ami:                         ami-6fe8e878
+instance_type:                      t2.small
+security_group:                     sg-703d1c0f
+subnet:                             subnet-9952fcd0
+name:                               Sigma CentOS 7 desktop AMI build
+rootuser:                           root
+ami_name:                           sigma-centos-7-desktop
+ami_description:                    "Sigma CentOS 7 core desktop build"
+
+Disks:
+    sda1:                           100
+    sdb:                            100
+
+Packages:
+    - aide
+    - authconfig
+    - awscli
+    - bind-utils
+    - git
+    - ipa-client
+    - java-1.8.0-openjdk-headless
+    - lvm2
+    - man-pages
+    - mlocate
+    - puppet
+    - rsync
+    - strace
+    - uuid-devel
+    - vim-enhanced
+    - ipa-client
+    - wget
+
+PackageGroups: 
+    - "Server with GUI"
+    - "GNOME Desktop"
+
+Repos:
+    sigma-centos-7:
+        baseurl:                        http://sigma-yum.s3.amazonaws.com/sigma-centos-7
+    sigma-epel:
+        baseurl:                        http://sigma-yum.s3.amazonaws.com/sigma-epel
+    sigma-puppetlabs:
+        baseurl:                        http://sigma-yum.s3.amazonaws.com/sigma-puppetlabs-el7
+
+CommandFiles: 
+    - manage_var
+    - disable_selinux
+    - disable_firewalld
+    - set_graphical_target

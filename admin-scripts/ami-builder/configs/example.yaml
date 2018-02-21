@@ -1,0 +1,36 @@
+---
+
+config_name:                        example
+source_ami:                         ami-6fe8e878
+instance_type:                      t2.small
+security_group:                     sg-703d1c0f
+subnet:                             subnet-9952fcd0
+name:                               Example CentOS 7 base AMI build
+rootuser:                           root
+ami_name:                           example-centos-7-base
+ami_description:                    "Example CentOS 7 core server build"
+
+Disks:
+    sda1:                           100
+    sdb:                            100
+
+Packages:
+    - lvm2
+    - awscli
+    - puppet
+    - ipa-client
+    - wget
+
+PackageGroups: []
+
+Repos:
+    example-centos-7:
+        baseurl:                        http://example-yum.s3.amazonaws.com/example-centos-7
+    example-epel:
+        baseurl:                        http://example-yum.s3.amazonaws.com/example-epel
+    example-puppetlabs:
+        baseurl:                        http://example-yum.s3.amazonaws.com/example-puppetlabs-el7
+
+CommandFiles: 
+    - manage_var
+    - disable_selinux

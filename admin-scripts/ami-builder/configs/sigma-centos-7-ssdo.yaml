@@ -1,0 +1,51 @@
+---
+
+config_name:                        sigma-centos-7-ssdo
+source_ami:                         ami-6fe8e878
+instance_type:                      d2.xlarge
+security_group:                     sg-40047c3a
+subnet:                             subnet-9952fcd0
+name:                               SSDO AMI build
+rootuser:                           root
+ami_name:                           sigma-centos-7-ssdo
+ami_description:                    "Sigma CentOS 7 core server with ephemeral drives attached"
+
+Disks:
+    sda1:                           100
+    sdb:                            100
+    sdc:                            ephemeral0
+    sdd:                            ephemeral1
+    sde:                            ephemeral2
+
+Packages:
+    - aide
+    - authconfig
+    - awscli
+    - bind-utils
+    - git
+    - ipa-client
+    - java-1.8.0-openjdk-headless
+    - lvm2
+    - man-pages
+    - mlocate
+    - puppet
+    - rsync
+    - strace
+    - uuid-devel
+    - vim-enhanced
+    - ipa-client
+    - wget
+
+PackageGroups: []
+
+Repos:
+    sigma-centos-7:
+        baseurl:                        http://sigma-yum.s3.amazonaws.com/sigma-centos-7
+    sigma-epel:
+        baseurl:                        http://sigma-yum.s3.amazonaws.com/sigma-epel
+    sigma-puppetlabs:
+        baseurl:                        http://sigma-yum.s3.amazonaws.com/sigma-puppetlabs-el7
+
+CommandFiles: 
+    - manage_var
+    - disable_selinux

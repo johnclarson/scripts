@@ -1,0 +1,26 @@
+
+## Dump the contents of all users and groups within slapd database in LDIF format
+ldapsearch -x -L -H ldap://`hostname`:389 "(|(ObjectClass=posixgroup)(ObjectClass=posixaccount))"
+
+## Dump all contents from the slapd ldap database in LDIF format
+ldapsearch -x -L -H ldap://`hostname`:389 "*"
+
+## Compare the results of a complete dump of slapd ldap database contents across multiple servers for consistency
+for server in SERVER_A SERVER_B SERVER_C; do ldapsearch -x -L -H ldap://${server}:389 "*" | sort | md5sum; done
+
+## Check for replication conflicts in the local slapd ldap database
+ldapsearch -x -D "cn=directory manager" -W -b "dc=sigma,dc=dsci" "nsds5ReplConflict=*" \* nsds5ReplConflict
+
+## Print out replication agreements for the local IPA server
+ipa-replica-manage -v list `hostname`
+
+## Remove replication agreement between SERVER_A and SERVER_B
+ipa-replica-manage disconnect SERVER_A SERVER_B
+
+## Create replication agreement between SERVER_A and SERVER_B
+ipa-replica-manage connect SERVER_A SERVER_B
+
+## Re-initalize local slapd database from a different, fully-functional IPA server
+ipa-replica-manage re-initialize --from SERVER_A
+
+

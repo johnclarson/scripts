@@ -1,0 +1,47 @@
+Source: https://www.hastexo.com/resources/hints-and-kinks/solve-drbd-split-brain-4-steps/
+
+
+When your DRBD resource is in a split-brain situation, don't panic! Split-brain means that the contents of the backing devices of your DRBD resource on both sides of your cluster started to diverge. At some point in time, the DRBD resource on both nodes went into the Primary role while the cluster nodes themselves were disconnected from each other.
+
+Different writes happened to both sides of your cluster afterwards. After reconnecting, DRBD doesn't know which set of data is "right" and which is "wrong".
+
+How to know if you need recovery:
+
+[root@c-corefs-2 ~]# drbd-overview
+ 0:corefsdata/0  StandAlone Secondary/Unknown UpToDate/DUnknown 
+
+This shows the DRBD node is not connected and in standalone mode. It also shows you it's Secondary so it's not on line as only one node can be live.
+
+You can also check /var/log/messages to see if split-brain was detected:
+
+[root@c-corefs-2 ~]# grep Split /var/log/messages
+Jul 10 10:31:04 c-corefs-2.sigma.dsci kernel: [   21.125875] block drbd0: Split-Brain detected but unresolved, dropping connection!
+
+To fis the issue we will resync all data from Primary to Secondary and reconnect the cluster. The <resource> is the name on the far left of the output of drbd-overview. In this case, corefsdata.
+
+On the Secondary node:
+
+[root@c-corefs-2 ~]# drbdadm -- --discard-my-data connect <resource>
+[root@c-corefs-2 ~]# drbd-overview
+ 0:corefsdata/0  WFConnection Secondary/Unknown UpToDate/DUnknown
+
+You are now just waiting for the Primary to reconnect. When it does, it will overwrite the entire contents of the Scondary and then we will be in sync.
+
+On Primary:
+
+[root@c-corefs-1]# drbdadm connect <resource>
+[root@c-corefs-1]# drbd-overview
+ 0:corefsdata/0  SyncSource Primary/Secondary UpToDate/Inconsistent /export xfs 100G 1.5G 99G 2%
+	[>....................] sync'ed:  0.4% (1265760/1266692)K 
+
+You should see the sync continue until it until it's 100% synced. Then you will see:
+
+Primary node:
+
+[root@c-corefs-1]# drbd-overview
+ 0:corefsdata/0  Connected Primary/Secondary UpToDate/UpToDate /export xfs 100G 1.5G 99G 2%
+
+Secondary node:
+
+[root@c-corefs-2 ~]# drbd-overview
+ 0:corefsdata/0  Connected Secondary/Primary UpToDate/UpToDate

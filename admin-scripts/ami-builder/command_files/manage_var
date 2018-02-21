@@ -1,0 +1,16 @@
+pvcreate /dev/xvdb
+vgcreate os /dev/xvdb
+lvcreate -n var -L 50G os
+lvcreate -n audit -L 10G os
+mkfs.xfs /dev/os/var
+mkfs.xfs /dev/os/audit
+mount /dev/os/var /mnt
+rsync -a /var/ /mnt
+umount /mnt
+mount /dev/os/audit /mnt
+rsync -a /var/log/audit/ /mnt
+umount /mnt
+sed -i 's/.*\/var.*$//' /etc/fstab
+sed -i '/^$/d' /etc/fstab
+echo "/dev/mapper/os-var       /var xfs  defaults 0 0" >> /etc/fstab
+echo "/dev/mapper/os-audit       /var/log/audit xfs  defaults 0 0" >> /etc/fstab

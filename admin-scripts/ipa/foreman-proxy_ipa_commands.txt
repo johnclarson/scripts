@@ -1,0 +1,28 @@
+# kinit admin
+# klist
+# ipa privilege-add 'Smart Proxy Host Management' --desc='Smart Proxy Host Management'
+# ipa permission-add 'modify host password' --permissions='write' --type='host' --attrs='userpassword'
+# ipa permission-add 'write host certificate' --permissions='write' --type='host' --attrs='usercertificate'
+# ipa permission-add 'modify host userclass' --permissions='write' --type='host' --attrs='userclass'
+# ipa privilege-add-permission 'Smart Proxy Host Management' \
+#   --permission='Modify Host Password' \
+#   --permission='Modify Host Userclass' \
+#   --permission='Revoke Certificate' \
+#   --permission='Write Host Certificate' \
+#   --permissions='Retrieve Certificates from the CA' \
+#   --permission='System: Add Hosts' \
+#   --permission='System: Remove Hosts' \
+#   --permission='System: Modify Hosts' \
+#   --permission='System: Manage Host Keytab' \
+#   --permissions='System: Modify Services' \
+#   --permissions='System: Manage Service Keytab' \
+#   --permission='System: Read DNS Entries' \
+#   --permission='System: Remove DNS Entries' \
+#   --permission='System: Add DNS Entries' \
+#   --permission='System: Update DNS Entries'
+# ipa role-add 'Smart Proxy Host Manager' --desc='Smart Proxy Host Manager'
+# ipa role-add-privilege 'Smart Proxy Host Manager' --privilege='Smart Proxy Host Management'
+# ipa user-add realm-proxy --first='Foreman' --last='Smart Proxy'
+# ipa role-add-member 'Smart Proxy Host Manager' --users='realm-proxy'
+# ipa-getkeytab -s c-ipa-1.sigma.dsci -p realm-proxy@SIGMA.DSCI -k freeipa.keytab
+# 

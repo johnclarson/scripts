@@ -1,0 +1,53 @@
+DEFAULT menu.c32
+PROMPT 0
+TIMEOUT 200
+ONTIMEOUT discovery
+MENU TITLE PXE Network Boot
+
+LABEL discovery
+    MENU LABEL Foreman 
+    KERNEL boot/fdi-image-3.4.0/vmlinuz0
+    APPEND initrd=/boot/fdi-image-3.4.0/initrd0.img rootfags=loop root=live:/fdi.iso rootfstype=auto ro rd.live.image acpi=force rd.luks=0 rd.md=0 rd.dm=0 rd.lvm-0 rd.bootif=0 rd.neednet=0 nomodeset proxy.url=https://foreman.p1.sigma.dsci proxy.type=foreman fdi.pxauto=1 ipv6.disable=1 fdi.ssh=1 fdi.rootpw=abc12345678
+    IPAPPEND 2
+
+LABEL cloud discovery
+    MENU LABEL Cloud Foreman 
+    KERNEL boot/fdi-image-3.4.0/vmlinuz0
+    APPEND initrd=/boot/fdi-image-3.4.0/initrd0.img rootfags=loop root=live:/fdi.iso rootfstype=auto ro rd.live.image acpi=force rd.luks=0 rd.md=0 rd.dm=0 rd.lvm-0 rd.bootif=0 rd.neednet=0 nomodeset proxy.url=https://foreman.sigma.dsci proxy.type=foreman fdi.pxauto=1 ipv6.disable=1 fdi.ssh=1 fdi.rootpw=abc12345678
+    IPAPPEND 2
+
+LABEL localdisk
+    MENU LABEL ^Local Hard Drive
+    KERNEL chain.c32
+    APPEND hd0 0
+
+LABEL install_hypervisor
+    MENU LABEL Install Sigma ^Hypervisor
+    KERNEL CentOS-7-x86_64-Everything-1708/isolinux/vmlinuz
+    APPEND ks=http://tftp.p1.sigma.dsci/ks/p-hyper.ks initrd=CentOS-7-x86_64-Everything-1708/isolinux/initrd.img ksdevice=bootif
+    IPAPPEND 2
+
+LABEL install_base_vm_image
+    MENU LABEL Install Sigma ^Base VM Image
+    KERNEL CentOS-7-x86_64-Everything-1708/isolinux/vmlinuz
+    APPEND ks=http://tftp.p1.sigma.dsci/ks/v-base.ks initrd=CentOS-7-x86_64-Everything-1708/isolinux/initrd.img ksdevice=bootif
+    IPAPPEND 2
+
+LABEL install_centos_7
+    MENU LABEL Install CentOS ^7
+    KERNEL CentOS-7-x86_64-Everything-1611/images/pxeboot/vmlinuz
+    APPEND ks=http://tftp.p1.sigma.dsci/ks/centos-7.ks initrd=CentOS-7-x86_64-Everything-1708/images/pxeboot/initrd.img ramdisk_size=100000 ksdevice=bootif
+    IPAPPEND 2
+
+LABEL install_centos_7.4_workstation
+    MENU LABEL Install CentOS 7.4 ^Workstation
+    KERNEL CentOS-7-x86_64-Everything-1708/images/pxeboot/vmlinuz
+    APPEND ks=http://tftp.p1.sigma.dsci/ks/centos-7.4-workstation.ks initrd=CentOS-7-x86_64-Everything-1708/images/pxeboot/initrd.img ramdisk_size=100000 ksdevice=bootif
+    IPAPPEND 2
+
+LABEL rescue-7.x
+    MENU LABEL ^Rescue CentOS 7.x
+    KERNEL CentOS-7-x86_64-Everything-1708/images/pxeboot/vmlinuz
+    APPEND ks=http://tftp.p1.sigma.dsci/ks/centos-7-rescue.ks initrd=CentOS-7-x86_64-Everything-1708/images/pxeboot/initrd.img ramdisk_size=100000 text rescue
+    IPAPPEND 2
+

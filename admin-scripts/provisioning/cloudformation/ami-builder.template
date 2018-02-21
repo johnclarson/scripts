@@ -1,0 +1,487 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "SIGMA AWS CloudFormation Template for AMI Builder on CentOS 7",
+  "Parameters": {
+    "KeyName": {
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+      "Default": "jlarson-uc2s",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+    },
+    "VPCid": {
+      "Description": "VPC where the Sync server should be built",
+      "Type": "AWS::EC2::VPC::Id",
+      "ConstraintDescription": "must be the name of a valid VPC"
+    },
+    "CentOSBaseRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-centos-7",
+      "Description": "URL of base Centos yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "CentOSUpdatesRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-centos-7",
+      "Description": "URL of updates Centos yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "128"
+    },
+    "EPELRepoURL": {
+      "Default": "http://sigma-yum.s3.amazonaws.com/sigma-epel",
+      "Description": "URL of EPEL yum repo",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64"
+    },
+    "InstanceSubnet": {
+      "Description": "Public subnet ID to build your Sync instance in",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the name of a valid subnet with an IGW"
+    },
+    "CFNRpm": {
+      "Default": "aws-cfn-bootstrap.rpm",
+      "Description": "RPM name for AWS CFN bootstrap found in ContentS3Bucket",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z0-9\\-\\.]+",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters and hyphens."
+    },
+    "AMIBuilderFolder": {
+      "Default": "ami-builder",
+      "Description": "Name of repo sync script found in ContentS3Bucket",
+      "Type": "String"
+    },
+      "ContentS3Bucket": {
+      "Default": "sigma-build",
+      "Description": "S3 bucket for content retrieval",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern": "[a-zA-Z0-9\\-\\.]+",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters and hyphens."
+    },
+    "AMI": {
+      "Default": "ami-0f764765",
+      "Description": "CentOS 7 AMI to use for AMI Builder",
+      "Type": "String",
+      "MinLength": "12",
+      "MaxLength": "12",
+      "AllowedPattern": "ami-[a-zA-Z0-9]*",
+      "ConstraintDescription": "must begin with ami- and contain only alphanumeric characters."
+    },
+    "AMIBuildConfigs": {
+    "Description": "Comma-delimited list of AMIs to build",
+    "Type" : "CommaDelimitedList",
+    "Default" : "genesis-ami"
+    },
+    "InstanceType": {
+      "Description": "Sync Server EC2 instance type",
+      "Type": "String",
+      "Default": "t2.small",
+      "AllowedValues": [
+        "t2.small",
+        "t2.medium",
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m4.large",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "SSHLocation": {
+      "Description": " The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    }
+  },
+  "Resources": {
+    "AMIBuilderInstanceIAMRole": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [
+                "ec2.amazonaws.com"
+              ]
+            },
+            "Action": [
+              "sts:AssumeRole"
+            ]
+          }
+        ]
+      },
+      "Path": "/",
+      "Policies": [
+        {
+          "PolicyName": "buildS3access",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "s3:ListAllMyBuckets",
+                "Resource": "arn:aws:s3:::*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:ListBucket",
+                  "s3:GetBucketLocation"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::", { "Ref": "ContentS3Bucket" } ]
+                   ] 
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ],
+                "Resource": { "Fn::Join" : [
+                   "", [ "arn:aws:s3:::", { "Ref": "ContentS3Bucket" }, "/*" ]
+                   ] 
+                }
+              }
+            ]
+          }
+        },
+        {
+          "PolicyName": "ec2-provisioning",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Action": [
+                  "ec2:*"
+                ],
+                "Effect": "Allow",
+                "Resource": "*",
+                "Sid": "ComputeBundle"
+              },
+              {
+                "Action": [
+                  "ec2:CreateVpc",
+                  "ec2:DeleteVpc",
+                  "ec2:CreateVpcPeeringConnection",
+                  "ec2:AcceptVpcPeeringConnection",
+                  "ec2:RejectVpcPeeringConnection",
+                  "ec2:DeleteVpcPeeringConnection",
+                  "ec2:CreateInternetGateway",
+                  "ec2:AttachInternetGateway",
+                  "ec2:DetachInternetGateway",
+                  "ec2:DeleteInternetGateway",
+                  "ec2:CreateVpnConnection",
+                  "ec2:CreateVpnConnectionRoute",
+                  "ec2:DeleteVpnConnection",
+                  "ec2:DeleteVpnConnectionRoute",
+                  "ec2:CreateVpnGateway",
+                  "ec2:AttachVpnGateway",
+                  "ec2:DetachVpnGateway",
+                  "ec2:DeleteVpnGateway",
+                  "ec2:CreateCustomerGateway",
+                  "ec2:DeleteCustomerGateway",
+                  "ec2:CopyImage"
+                ],
+                "Effect": "Deny",
+                "Resource": "*",
+                "Sid": "ComputeBundleDenyNet"
+              },
+              {
+                "Action": [
+                  "ec2:ModifyIdFormat",
+                  "ec2:CreateInstanceExportTask",
+                  "ec2:CancelExportTask",
+                  "ec2:ModifyImageAttribute"
+                ],
+                "Effect": "Deny",
+                "Resource": "*",
+                "Sid": "ComputeBundleDenyImage"
+              }
+            ]
+          }
+        } 
+      ]
+      }
+    },
+    "AMIBuilderInstanceIAMProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "AMIBuilderInstanceIAMRole"
+          }
+        ]
+      }
+    },
+    "AMIBuilderInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "InstallAndConfigure": [
+              "Install",
+              "Configure"
+            ]
+          },
+          "Install": {
+            "packages": {
+              "yum": {
+                "fabric": [],
+                "awscli": []
+              }
+            },
+            "files": {
+              "/etc/cfn/cfn-hup.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[main]\n",
+                      "stack=",
+                      {
+                        "Ref": "AWS::StackId"
+                      },
+                      "\n",
+                      "region=",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n"
+                    ]
+                  ]
+                },
+                "mode": "000400",
+                "owner": "root",
+                "group": "root"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[cfn-auto-reloader-hook]\n",
+                      "triggers=post.update\n",
+                      "path=Resources.AMIBuilderInstance.Metadata.AWS::CloudFormation::Init\n",
+                      "action=/opt/aws/bin/cfn-init -v ",
+                      "         --stack ",
+                      {
+                        "Ref": "AWS::StackName"
+                      },
+                      "         --resource AMIBuilderInstance ",
+                      "         --configsets InstallAndConfigure ",
+                      "         --region ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "runas=root\n"
+                    ]
+                  ]
+                }
+              }
+            },
+            "services": {
+              "cfn-hup": {
+                "enabled": "true",
+                "ensureRunning": "true",
+                "files": [
+                  "/etc/cfn/cfn-hup.conf",
+                  "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                ]
+              }
+            }
+          },
+          "Configure": {
+            "commands": {
+              "01_download_amibuilder_files": {
+                "command": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "aws s3 sync s3://", 
+                      {
+                         "Ref": "ContentS3Bucket"
+                      },
+                      "/",
+                      {
+                         "Ref": "AMIBuilderFolder"
+                      },
+                      " /root\n",
+                      "chmod +x /root/ami-builder.py\n",
+                      "chmod 400 /root/ami-builder/keys/*\n"
+                     ]
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId": {
+          "Ref": "AMI"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "Tags" : [
+          {
+            "Key" : "Name",
+            "Value" : "AMI Builder"
+          }
+        ],
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "IamInstanceProfile": {
+          "Ref": "AMIBuilderInstanceIAMProfile"
+        },
+        "NetworkInterfaces": [
+          {
+            "AssociatePublicIpAddress": "True",
+            "DeleteOnTermination": "True",
+            "SubnetId": {
+              "Ref": "InstanceSubnet"
+            },
+            "DeviceIndex": "0",
+            "GroupSet": [
+              {
+                "Ref": "AMIBuilderSecurityGroup"
+              }
+            ]
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -xe\n",
+                "/bin/sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/sysconfig/selinux\n",
+                "# Set up yum repos\n",
+                "rm -rf /etc/yum.repos.d/*\n",
+                "cat << EOF > /etc/yum.repos.d/CentOS.repo\n",
+                "[CentOSBase]\n",
+                "name=CentOSBase\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSBaseRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "\n",
+                "[CentOSUpdates]\n",
+                "name=CentOSUpdates\n",
+                "baseurl=",
+                {
+                  "Ref": "CentOSUpdatesRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "cat << EOF > /etc/yum.repos.d/EPEL.repo\n",
+                "[EPEL]\n",
+                "name=EPEL\n",
+                "baseurl=",
+                {
+                  "Ref": "EPELRepoURL"
+                },
+                "\n",
+                "enabled=1\n",
+                "gpgcheck=0\n",
+                "EOF\n",
+                "yum -y install pystache\n",
+                "yum -y install python-daemon\n",
+                "yum -y install awscli\n",
+                "/bin/aws s3 cp s3://",
+                {
+                  "Ref": "ContentS3Bucket"
+                },
+                "/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                " /tmp\n",
+                "rpm -i /tmp/",
+                {
+                  "Ref": "CFNRpm"
+                },
+                "\n",
+                "/sbin/chkconfig --add cfn-hup\n",
+                "# Install the files and packages from the metadata\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource AMIBuilderInstance ",
+                "         --configsets InstallAndConfigure ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "# Signal the status from cfn-init\n",
+                "/opt/aws/bin/cfn-signal -e $? ",
+                "         --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                "         --resource AMIBuilderInstance ",
+                "         --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Timeout": "PT10M"
+        }
+      }
+    },
+    "AMIBuilderSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Enable AMI Builder server ports",
+        "VpcId": {
+          "Ref": "VPCid"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": {
+              "Ref": "SSHLocation"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

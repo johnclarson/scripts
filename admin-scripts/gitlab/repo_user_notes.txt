@@ -1,0 +1,7 @@
+
+sudo -u gitlab-psql -i bash
+/opt/gitlab/embedded/bin/psql --port 5432 -h /var/opt/gitlab/postgresql -d gitlabhq_production
+select id,username,name,email,unconfirmed_email,confirmed_at from users;
+update users set email='XXXXXX@sigma.dsci', unconfirmed_email=null, confirmed_at=now() where id=X;
+
+
